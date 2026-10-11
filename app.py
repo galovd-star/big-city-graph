@@ -13,7 +13,7 @@ st.title("🌐 БИГ СИТИ: Облачный редактор лора и с
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1MyQ3vqstgSAarY9NtsAl1f1tnlbgmi-2iljHMf97zBM/edit?gid=0#gid=0"
 
 if SHEET_URL == "ВСТАВЬТЕ_ССЫЛКУ_СЮДА":
-    st.error("⚠️ Откройте код app.py на GitHub и вставьте настоящую ссылку на вашу Google Таблицу в переменную SHEET_URL.")
+    st.error("⚠️ Откройте код app.py на GitHub и вставьте настоящую ссылку на вашу Google Таблицу в переменную SHEET_URL (строка 14).")
     st.stop()
 
 PALETTE = ["#ff4d4d", "#4da6ff", "#9933ff", "#33cc33", "#ffcc00", "#ff66b2", "#339999", "#ff9933", "#996633", "#6699ff"]
@@ -21,13 +21,12 @@ PALETTE = ["#ff4d4d", "#4da6ff", "#9933ff", "#33cc33", "#ffcc00", "#ff66b2", "#3
 # --- ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ GOOGLE ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-@st.cache_data(ttl=5) # Кэш на 5 секунд, чтобы все соавторы видели изменения почти в реальном времени
+@st.cache_data(ttl=5) 
 def load_data():
     try:
         nodes = conn.read(spreadsheet=SHEET_URL, worksheet="Nodes")
         edges = conn.read(spreadsheet=SHEET_URL, worksheet="Edges")
         
-        # Защита от пустых таблиц
         if nodes.empty:
             nodes = pd.DataFrame(columns=['Имя / Название персонажа', 'Категория плана', 'Пол', 'Группировка', 'Заметки'])
         if edges.empty:
@@ -47,7 +46,7 @@ def load_config():
         cfg = conn.read(spreadsheet=SHEET_URL, worksheet="Config")
         if not cfg.empty and 'Settings' in cfg.columns:
             val = cfg['Settings'].iloc[0]
-            if pd.notna(val) and val.strip() != "":
+            if pd.notna(val) and str(val).strip() != "":
                 return json.loads(val)
     except Exception:
         pass
@@ -73,13 +72,11 @@ if 'nodes' not in st.session_state or 'edges' not in st.session_state:
 if 'config' not in st.session_state:
     st.session_state['config'] = load_config()
 
-# --- БРОНЯ: ЗАЩИТА ОТ ПУСТЫХ НАСТРОЕК ---
-if 'colors' not in st.session_state['config']:
-    st.session_state['config']['colors'] = {}
-if 'options' not in st.session_state['config']:
-    st.session_state['config']['options'] = {}
+# Защита от пустых конфигов (Броня)
+if 'colors' not in st.session_state['config']: st.session_state['config']['colors'] = {}
+if 'options' not in st.session_state['config']: st.session_state['config']['options'] = {}
 
-# Окно синхронизации (кнопка принудительного обновления для соавторов)
+# Окно синхронизации для коллег
 col_sync1, col_sync2 = st.columns([8, 2])
 with col_sync2:
     if st.button("🔄 Обновить данные из облака", use_container_width=True):
@@ -90,17 +87,71 @@ with col_sync2:
 
 st.write("---")
 
-# --- ВКЛАДКИ ИНТЕРФЕЙСА ---
-tab_graph, tab_chars, tab_edges = st.tabs(["🕸 Интерактивный Граф", "👤 Редактор Персонажей", "🔗 Редактор Связей"])
+# --- ВКЛАДКИ ИНТЕРФЕЙСА (Теперь их 4) ---
+tab_graph, tab_chars, tab_edges, tab_stats = st.tabs(["🕸 Интерактивный Граф", "👤 Редактор Персонажей", "🔗 Редактор Связей", "📊 Статистика Вселенной"])
+
+# --- ВКЛАДКА 4: СТАТИСТИКА (НОВАЯ) ---
+with tab_stats:
+    st.subheader("Аналитика и распределение сил")
+    
+    # Главные метрики
+    m1, m2, m3 = st.columns(3)
+    m1.metric("👥 Всего персонажей", len(st.session_state['nodes']))
+    m2.metric("🔗 Всего связей", len(st.session_state['edges']))
+    
+    color_cols = [c for c in st.session_state['nodes'].columns if c not in ["Имя / Название персонажа", "Заметки"]]
+    m3.metric("🗂 Создано категорий", len(color_cols))
+    
+    st.write("---")
+    
+    c_stat1, c_stat2 = st.columns(2)
+    with c_stat1:
+        st.markdown("**Распределение по категориям**")
+        stat_cat = st.selectbox("Выберите категорию для анализа (Расы, Роли, Фракции):", color_cols)
+        if stat_cat:
+            counts = st.session_state['nodes'][stat_cat].value_counts()
+            st.bar_chart(counts)
+            
+    with c_stat2:
+        st.markdown("**👑 Топ-10 Влиятельных фигур** *(по количеству связей)*")
+        if not st.session_state['edges'].empty:
+            all_edges = pd.concat([st.session_state['edges']['Source'], st.session_state['edges']['Target']])
+            top_chars = all_edges.value_counts().head(10)
+            st.bar_chart(top_chars)
+        else:
+            st.info("Добавьте связи, чтобы увидеть лидеров.")
 
 # --- ВКЛАДКА 2: РЕДАКТОР ПЕРСОНАЖЕЙ ---
 with tab_chars:
     st.subheader("Управление Облачной Базой")
     
-    col_menu1, col_menu2 = st.columns(2)
     protected_cols = ["Имя / Название персонажа", "Заметки"]
     custom_cols = [c for c in st.session_state['nodes'].columns if c not in protected_cols]
 
+    # ИНСТРУМЕНТ: БЕЗОПАСНОЕ ПЕРЕИМЕНОВАНИЕ
+    with st.expander("🔄 Умное переименование персонажа (С сохранением связей)"):
+        st.info("💡 Меняйте имя героя здесь, чтобы оно автоматически обновилось не только в базе, но и на карте связей!")
+        all_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
+        old_name = st.selectbox("Выберите персонажа:", all_chars)
+        new_char_name = st.text_input("Новое имя (без опечаток):").strip()
+        
+        if st.button("Применить новое имя"):
+            if new_char_name and new_char_name != old_name and new_char_name not in all_chars:
+                # Заменяем в персонажах
+                st.session_state['nodes']['Имя / Название персонажа'] = st.session_state['nodes']['Имя / Название персонажа'].replace(old_name, new_char_name)
+                # Заменяем в связях (ОЧЕНЬ ВАЖНО)
+                st.session_state['edges']['Source'] = st.session_state['edges']['Source'].replace(old_name, new_char_name)
+                st.session_state['edges']['Target'] = st.session_state['edges']['Target'].replace(old_name, new_char_name)
+                
+                with st.spinner("Записываем изменения во все таблицы в облаке..."):
+                    save_nodes_to_cloud(st.session_state['nodes'])
+                    save_edges_to_cloud(st.session_state['edges'])
+                st.success(f"Готово! '{old_name}' успешно переименован в '{new_char_name}'. Связи сохранены.")
+                st.rerun()
+            elif new_char_name in all_chars:
+                st.warning("Персонаж с таким именем уже существует!")
+
+    col_menu1, col_menu2 = st.columns(2)
     with col_menu1:
         with st.expander("⚙️ Управление столбцами (Создать / Изменить / Удалить)"):
             new_col = st.text_input("Создать новый столбец (напр. Оружие, Раса):").strip()
@@ -163,6 +214,7 @@ with tab_chars:
                             st.rerun()
 
     st.write("---")
+    st.markdown("💡 *Подсказка: Вы можете редактировать любые ячейки, включая имена, просто кликнув по ним дважды. Но для глобального изменения имени лучше используйте инструмент «Умное переименование» выше.*")
     
     col_config = {
         "Имя / Название персонажа": st.column_config.TextColumn("Имя (уникальное)", required=True),
@@ -182,7 +234,7 @@ with tab_chars:
         column_config=col_config
     )
     
-    if st.button("💾 Сохранить персонажей", type="primary"):
+    if st.button("💾 Сохранить изменения персонажей", type="primary"):
         df_to_save = edited_nodes.dropna(subset=['Имя / Название персонажа']).fillna("Не указано")
         st.session_state['nodes'] = df_to_save
         with st.spinner("Запись в Google Таблицу..."):
@@ -207,7 +259,7 @@ with tab_edges:
             "Weight": st.column_config.NumberColumn("Сила связи (1-5)", min_value=1, max_value=5, step=1)
         }
     )
-    if st.button("💾 Сохранить связи", type="primary"):
+    if st.button("💾 Сохранить новые связи", type="primary"):
         df_edges_save = edited_edges.dropna(subset=['Source', 'Target'])
         st.session_state['edges'] = df_edges_save
         with st.spinner("Запись связей в Google Таблицу..."):
