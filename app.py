@@ -73,6 +73,12 @@ if 'nodes' not in st.session_state or 'edges' not in st.session_state:
 if 'config' not in st.session_state:
     st.session_state['config'] = load_config()
 
+# --- БРОНЯ: ЗАЩИТА ОТ ПУСТЫХ НАСТРОЕК ---
+if 'colors' not in st.session_state['config']:
+    st.session_state['config']['colors'] = {}
+if 'options' not in st.session_state['config']:
+    st.session_state['config']['options'] = {}
+
 # Окно синхронизации (кнопка принудительного обновления для соавторов)
 col_sync1, col_sync2 = st.columns([8, 2])
 with col_sync2:
