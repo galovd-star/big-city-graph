@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit.components.v1 as components
 from pyvis.network import Network
 from streamlit_gsheets import GSheetsConnection
+import plotly.express as px
 import json
 
 # --- НАСТРОЙКИ СТРАНИЦЫ ---
@@ -72,7 +73,7 @@ if 'nodes' not in st.session_state or 'edges' not in st.session_state:
 if 'config' not in st.session_state:
     st.session_state['config'] = load_config()
 
-# Защита от пустых конфигов (Броня)
+# Защита от пустых конфигов
 if 'colors' not in st.session_state['config']: st.session_state['config']['colors'] = {}
 if 'options' not in st.session_state['config']: st.session_state['config']['options'] = {}
 
@@ -87,10 +88,10 @@ with col_sync2:
 
 st.write("---")
 
-# --- ВКЛАДКИ ИНТЕРФЕЙСА (Теперь их 4) ---
+# --- ВКЛАДКИ ИНТЕРФЕЙСА ---
 tab_graph, tab_chars, tab_edges, tab_stats = st.tabs(["🕸 Интерактивный Граф", "👤 Редактор Персонажей", "🔗 Редактор Связей", "📊 Статистика Вселенной"])
 
-# --- ВКЛАДКА 4: СТАТИСТИКА (НОВАЯ) ---
+# --- ВКЛАДКА 4: СТАТИСТИКА (ОБНОВЛЕННАЯ С PLOTLY) ---
 with tab_stats:
     st.subheader("Аналитика и распределение сил")
     
@@ -109,17 +110,53 @@ with tab_stats:
         st.markdown("**Распределение по категориям**")
         stat_cat = st.selectbox("Выберите категорию для анализа (Расы, Роли, Фракции):", color_cols)
         if stat_cat:
-            counts = st.session_state['nodes'][stat_cat].value_counts()
-            st.bar_chart(counts)
+            # Подготовка данных для круговой диаграммы
+            counts = st.session_state['nodes'][stat_cat].value_counts().reset_index()
+            counts.columns = [stat_cat, 'Количество']
+            
+            # Построение красивой интерактивной круговой диаграммы (Donut Chart)
+            fig_pie = px.pie(
+                counts, 
+                values='Количество', 
+                names=stat_cat, 
+                hole=0.4, # Делает диаграмму в виде кольца (бублика)
+                color_discrete_sequence=px.colors.qualitative.Pastel
+            )
+            # Настройка отображения процентов и текста
+            fig_pie.update_traces(
+                textposition='inside', 
+                textinfo='percent+label',
+                hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent}"
+            )
+            fig_pie.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10))
+            st.plotly_chart(fig_pie, use_container_width=True)
             
     with c_stat2:
         st.markdown("**👑 Топ-10 Влиятельных фигур** *(по количеству связей)*")
         if not st.session_state['edges'].empty:
+            # Считаем упоминания каждого персонажа в графе
             all_edges = pd.concat([st.session_state['edges']['Source'], st.session_state['edges']['Target']])
-            top_chars = all_edges.value_counts().head(10)
-            st.bar_chart(top_chars)
+            top_chars = all_edges.value_counts().head(10).reset_index()
+            top_chars.columns = ['Персонаж', 'Количество связей']
+            
+            # Построение горизонтального столбчатого графика
+            fig_bar = px.bar(
+                top_chars, 
+                x='Количество связей', 
+                y='Персонаж', 
+                orientation='h',
+                color='Количество связей', 
+                color_continuous_scale='Blues'
+            )
+            # Улучшение внешнего вида (сортировка сверху вниз)
+            fig_bar.update_layout(
+                yaxis={'categoryorder':'total ascending'},
+                coloraxis_showscale=False, 
+                margin=dict(t=10, b=10, l=10, r=10)
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
         else:
-            st.info("Добавьте связи, чтобы увидеть лидеров.")
+            st.info("Добавьте связи в Редакторе Связей, чтобы увидеть лидеров.")
 
 # --- ВКЛАДКА 2: РЕДАКТОР ПЕРСОНАЖЕЙ ---
 with tab_chars:
@@ -137,9 +174,7 @@ with tab_chars:
         
         if st.button("Применить новое имя"):
             if new_char_name and new_char_name != old_name and new_char_name not in all_chars:
-                # Заменяем в персонажах
                 st.session_state['nodes']['Имя / Название персонажа'] = st.session_state['nodes']['Имя / Название персонажа'].replace(old_name, new_char_name)
-                # Заменяем в связях (ОЧЕНЬ ВАЖНО)
                 st.session_state['edges']['Source'] = st.session_state['edges']['Source'].replace(old_name, new_char_name)
                 st.session_state['edges']['Target'] = st.session_state['edges']['Target'].replace(old_name, new_char_name)
                 
@@ -214,7 +249,6 @@ with tab_chars:
                             st.rerun()
 
     st.write("---")
-    st.markdown("💡 *Подсказка: Вы можете редактировать любые ячейки, включая имена, просто кликнув по ним дважды. Но для глобального изменения имени лучше используйте инструмент «Умное переименование» выше.*")
     
     col_config = {
         "Имя / Название персонажа": st.column_config.TextColumn("Имя (уникальное)", required=True),
