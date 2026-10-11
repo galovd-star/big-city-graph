@@ -9,7 +9,35 @@ import json
 # --- НАСТРОЙКИ СТРАНИЦЫ ---
 st.set_page_config(layout="wide", page_title="БИГ СИТИ: Редактор Вселенной")
 st.title("🌐 БИГ СИТИ: Облачный редактор лора и связей")
-
+st.markdown("""
+<style>
+    /* Меняем стиль главного заголовка */
+    h1 {
+        color: #00d4ff !important;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        font-family: 'Courier New', Courier, monospace;
+    }
+    
+    /* Делаем вкладки (Tabs) более объемными */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background-color: #252535;
+        border-radius: 4px 4px 0 0;
+        padding: 10px 20px;
+    }
+    
+    /* Можно даже добавить фоновую картинку на весь сайт (раскомментируйте, вставив ссылку) */
+    /*
+    .stApp {
+        background-image: url("ССЫЛКА_НА_ВАШУ_КАРТИНКУ.jpg");
+        background-size: cover;
+        background-attachment: fixed;
+    }
+    */
+</style>
+""", unsafe_allow_html=True)
 # 🔗 ВСТАВЬТЕ СЮДА ССЫЛКУ НА ВАШУ GOOGLE ТАБЛИЦУ (внутри кавычек)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1MyQ3vqstgSAarY9NtsAl1f1tnlbgmi-2iljHMf97zBM/edit?gid=0#gid=0"
 
