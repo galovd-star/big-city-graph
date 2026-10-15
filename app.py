@@ -2052,20 +2052,22 @@ elif app_mode == "🏛 Фракции и Организации":
 
 
 # ==============================================================================
-# МОДУЛЬ 4: КАРТА МЕСТНОСТИ (КЛИК МЫШЬЮ ПО КАРТИНКЕ + РАЗМЕЩЕНИЕ ГЕРОЕВ И ОБЪЕКТОВ)
+# МОДУЛЬ 4: КАРТА МЕСТНОСТИ (КЛИК МЫШЬЮ + УДАЛЕНИЕ ПЕРСОНАЖЕЙ И ЛОКАЦИЙ)
 # ==============================================================================
 elif app_mode == "🗺 Карта Местности":
-    st.title("🗺 Интерактивная Карта: Размещение кликом мыши")
+    st.title("🗺 Интерактивная Карта: Размещение и Управление")
     df_loc = st.session_state['locations'].copy()
     all_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
     all_scripts = st.session_state['scripts']['Title'].dropna().unique().tolist()
     all_factions = ["Нейтральная территория"] + st.session_state['factions']['Name'].dropna().unique().tolist()
 
-    # Инициализация координат клика в сессии
+    # Инициализация состояния клика и выбранного объекта на карте
     if 'map_clicked_x' not in st.session_state:
         st.session_state['map_clicked_x'] = 50.0
     if 'map_clicked_y' not in st.session_state:
         st.session_state['map_clicked_y'] = 50.0
+    if 'map_selected_item' not in st.session_state:
+        st.session_state['map_selected_item'] = "➕ Создать в точке прицела 🎯"
 
     # --- 1. ВЫБОР РЕГИОНА И ЗАГРУЗКА КАРТИНКИ ФОНА ---
     existing_regions = sorted(list(set(["Глобальная карта (БИГ СИТИ)"] + [r for r in df_loc['Region'].unique().tolist() if str(r).strip()])))
@@ -2082,7 +2084,6 @@ elif app_mode == "🗺 Карта Местности":
             bg_url_inp = st.text_input("ИЛИ прямая ссылка на картинку карты:", key="reg_bg_url")
             if st.button("💾 Установить фон карты", use_container_width=True):
                 if up_reg_bg is not None:
-                    # Сжимаем до безопасного размера для ячейки Google Sheets
                     b64_map = compress_uploaded_image(up_reg_bg, max_size=(900, 650), quality=70)
                     st.session_state['config'].setdefault('region_maps', {})[active_region] = b64_map
                     save_config_to_cloud(st.session_state['config'])
@@ -2100,9 +2101,9 @@ elif app_mode == "🗺 Карта Местности":
                     save_config_to_cloud(st.session_state['config'])
                     st.rerun()
 
-    st.info("👆 **Как размещать:** Кликните мышкой в любую точку на картинке карты ниже — там появится **золотой прицел 🎯**, а координаты автоматически подставятся в панель справа от карты.")
+    st.info("👆 **Управление:** Кликните в пустое место карты, чтобы поставить **прицел 🎯**, ИЛИ кликните прямо по **существующему маркеру** на карте, чтобы изменить или удалить его!")
 
-    # --- 2. РАЗДЕЛЕНИЕ ЭКРАНА: СЛЕВА КАРТА С КЛИКОМ, СПРАВА ПАНЕЛЬ РАЗМЕЩЕНИЯ ---
+    # --- 2. РАЗДЕЛЕНИЕ ЭКРАНА: СЛЕВА КАРТА С КЛИКОМ, СПРАВА ПАНЕЛЬ УПРАВЛЕНИЯ ---
     map_col, form_col = st.columns([1.85, 1.15])
 
     reg_df = df_loc[df_loc['Region'] == active_region].copy()
@@ -2138,9 +2139,9 @@ elif app_mode == "🗺 Карта Местности":
             mode='markers',
             name='Сетка клика',
             showlegend=False,
-            marker=dict(size=14, color='rgba(0, 0, 0, 0.005)'), # Полностью прозрачные маркеры
+            marker=dict(size=14, color='rgba(0, 0, 0, 0.005)'),
             hoverinfo='x+y',
-            hovertemplate="🎯 Кликните сюда, чтобы выбрать: X=%{x}, Y=%{y}<extra></extra>"
+            hovertemplate="🎯 Кликните для выбора координат: X=%{x}, Y=%{y}<extra></extra>"
         ))
 
         # В) Отрисовка уже размещенных объектов и персонажей на карте
@@ -2165,13 +2166,13 @@ elif app_mode == "🗺 Карта Местности":
                     textposition='top center',
                     textfont=dict(size=12, color='#ffffff', family='Courier New'),
                     marker=dict(size=sz, symbol=sym, color=col_m, line=dict(width=2, color='#121212')),
-                    customdata=grp[['Controlling_Faction', 'Linked_Characters', 'Linked_Scripts', 'Description']],
+                    customdata=grp[['Controlling_Faction', 'Linked_Characters', 'Linked_Scripts', 'Description', 'Name']],
                     hovertemplate=(
                         "<b>%{text}</b> (" + str(l_type_val) + ")<br>"
                         "Фракция/Контроль: <b>%{customdata[0]}</b><br>"
                         "Координаты: X=%{x}, Y=%{y}<br>"
                         "Герои: %{customdata[1]}<br>"
-                        "<i>%{customdata[3]}</i><extra></extra>"
+                        "<i>%{customdata[3]}</i><extra>Кликните для выбора/удаления</extra>"
                     )
                 ))
 
@@ -2202,7 +2203,6 @@ elif app_mode == "🗺 Карта Местности":
             dragmode='pan'
         )
 
-        # Включаем интерактивный перехват кликов по графику
         map_event = st.plotly_chart(
             fig_map,
             use_container_width=True,
@@ -2211,38 +2211,63 @@ elif app_mode == "🗺 Карта Местности":
             key=f"interactive_map_{active_region}"
         )
 
-        # Если пользователь кликнул на карту — обновляем координаты прицела
+        # Обработка клика по карте (либо по сетке, либо прямо по существующему объекту/персонажу)
         if map_event and "selection" in map_event and map_event["selection"].get("points"):
             pt = map_event["selection"]["points"][0]
             new_x = float(pt.get("x", st.session_state['map_clicked_x']))
             new_y = float(pt.get("y", st.session_state['map_clicked_y']))
-            if (new_x, new_y) != (st.session_state['map_clicked_x'], st.session_state['map_clicked_y']):
+
+            # Проверяем, попали ли мы в существующий маркер
+            clicked_item_name = None
+            if not reg_df.empty:
+                matched = reg_df[(reg_df['X'] == new_x) & (reg_df['Y'] == new_y)]
+                if not matched.empty:
+                    clicked_item_name = str(matched.iloc[0]['Name'])
+
+            coords_changed = (new_x, new_y) != (st.session_state['map_clicked_x'], st.session_state['map_clicked_y'])
+            item_changed = clicked_item_name is not None and clicked_item_name != st.session_state.get('map_selected_item')
+
+            if coords_changed or item_changed:
                 st.session_state['map_clicked_x'] = new_x
                 st.session_state['map_clicked_y'] = new_y
+                if clicked_item_name:
+                    st.session_state['map_selected_item'] = clicked_item_name
                 st.rerun()
 
-    # --- 3. ПРАВАЯ ПАНЕЛЬ: РАЗМЕЩЕНИЕ ПЕРСОНАЖА ИЛИ ОБЪЕКТА В ТОЧКУ КЛИКА ---
+    # --- 3. ПРАВАЯ ПАНЕЛЬ: РАЗМЕЩЕНИЕ, РЕДАКТИРОВАНИЕ И УДАЛЕНИЕ ---
     with form_col:
-        st.subheader("🎯 Панель размещения")
+        st.subheader("🎯 Панель управления точкой")
         st.markdown(f"**Координаты прицела:** `X = {st.session_state['map_clicked_x']}` | `Y = {st.session_state['map_clicked_y']}`")
 
         place_mode = st.radio(
-            "Что разместить / изменить в точке клика:",
-            ["👤 Разместить Персонажа", "📍 Создать / Изменить Объект"],
+            "Режим работы:",
+            ["📍 Локации и Маркеры (Все)", "👤 Быстро поставить Персонажа"],
             horizontal=True
         )
 
-        if place_mode == "👤 Разместить Персонажа":
+        if place_mode == "👤 Быстро поставить Персонажа":
             if not all_chars:
                 st.warning("В базе пока нет персонажей.")
             else:
                 sel_char_map = st.selectbox("Выберите персонажа:", all_chars, key="map_char_sel")
+                marker_name = f"👤 {sel_char_map}"
                 char_info = CHAR_LOOKUP.get(sel_char_map, {})
                 default_fac = char_info.get("faction", "Нейтральная территория") if char_info.get("faction") else "Нейтральная территория"
-                char_note = st.text_input("Статус / Что делает в этой точке:", value="Находится здесь")
 
-                if st.button("📌 Поставить персонажа в точку 🎯", type="primary", use_container_width=True):
-                    marker_name = f"👤 {sel_char_map}"
+                existing_char_mask = (df_loc['Name'] == marker_name) & (df_loc['Region'] == active_region)
+                is_already_on_map = existing_char_mask.any()
+
+                if is_already_on_map:
+                    ex_row = df_loc[existing_char_mask].iloc[0]
+                    st.caption(f"✅ Сейчас на этой карте в точке `X={ex_row['X']}, Y={ex_row['Y']}`")
+                    default_note = str(ex_row['Description'])
+                else:
+                    st.caption("⚪ Этого персонажа пока нет на данной карте.")
+                    default_note = "Находится здесь"
+
+                char_note = st.text_input("Статус / Что делает в этой точке:", value=default_note)
+
+                if st.button("📌 Поставить / Переместить в точку 🎯", type="primary", use_container_width=True):
                     new_c_loc = {
                         "Name": marker_name,
                         "Region": active_region,
@@ -2256,22 +2281,31 @@ elif app_mode == "🗺 Карта Местности":
                         "Linked_Scripts": ""
                     }
                     base_l = st.session_state['locations'][LOC_COLS]
-                    # Если этот персонаж уже стоит в этом регионе — просто двигаем его в новую точку клика!
-                    existing_mask = (base_l['Name'] == marker_name) & (base_l['Region'] == active_region)
-                    if existing_mask.any():
-                        idx_m = base_l[existing_mask].index[0]
+                    if is_already_on_map:
+                        idx_m = base_l[existing_char_mask].index[0]
                         for k, v in new_c_loc.items():
                             st.session_state['locations'].at[idx_m, k] = v
                     else:
                         st.session_state['locations'] = pd.concat([base_l, pd.DataFrame([new_c_loc])], ignore_index=True)
 
                     save_sheet("Locations", st.session_state['locations'][LOC_COLS])
-                    st.success(f"{sel_char_map} размещен в точке ({st.session_state['map_clicked_x']}, {st.session_state['map_clicked_y']})!")
+                    st.success(f"{sel_char_map} размещен в ({st.session_state['map_clicked_x']}, {st.session_state['map_clicked_y']})!")
                     st.rerun()
 
+                if is_already_on_map:
+                    if st.button(f"🗑 Убрать «{sel_char_map}» с этой карты", use_container_width=True):
+                        st.session_state['locations'] = df_loc[~existing_char_mask].reset_index(drop=True)
+                        save_sheet("Locations", st.session_state['locations'][LOC_COLS])
+                        st.success(f"{sel_char_map} убран с карты!")
+                        st.rerun()
+
         else:
-            loc_edit = st.selectbox("Выберите объект:", ["➕ Новый объект в точке 🎯"] + reg_df['Name'].tolist())
-            if loc_edit == "➕ Новый объект в точке 🎯":
+            item_options = ["➕ Создать в точке прицела 🎯"] + reg_df['Name'].tolist()
+            default_idx = item_options.index(st.session_state['map_selected_item']) if st.session_state.get('map_selected_item') in item_options else 0
+            loc_edit = st.selectbox("Выберите элемент на карте (или кликните по нему мышкой):", item_options, index=default_idx)
+            st.session_state['map_selected_item'] = loc_edit
+
+            if loc_edit == "➕ Создать в точке прицела 🎯":
                 l_name, l_type, l_fac, l_desc, l_chars, l_scrs = (
                     "", "Городской объект", "Нейтральная территория", "", [], []
                 )
@@ -2284,23 +2318,26 @@ elif app_mode == "🗺 Карта Местности":
                 l_scrs = [x.strip() for x in str(lr['Linked_Scripts']).split(',') if x.strip() in all_scripts]
                 cur_x, cur_y = float(lr['X']), float(lr['Y'])
 
-            inp_lname = st.text_input("Название объекта / локации:", value=l_name)
+            inp_lname = st.text_input("Название объекта / локации / маркера:", value=l_name)
             type_l_opts = ["Городской объект", "Штаб / База", "Район / Зона", "Подземелье / Секрет", "Порт / Узел", "Руины / Аномалия", "👤 Персонаж на карте"]
             inp_ltype = st.selectbox("Тип точки:", type_l_opts, index=type_l_opts.index(l_type) if l_type in type_l_opts else 0)
             fac_opts = all_factions if l_fac in all_factions else all_factions + [l_fac]
             inp_lfac = st.selectbox("Контролирующая фракция:", fac_opts, index=fac_opts.index(l_fac))
 
-            use_click_coords = st.checkbox("🎯 Применить координаты последнего клика мыши", value=True)
-            final_x = st.session_state['map_clicked_x'] if use_click_coords else cur_x
-            final_y = st.session_state['map_clicked_y'] if use_click_coords else cur_y
+            move_to_crosshair = st.checkbox(
+                f"🎯 Переместить в текущие координаты прицела ({st.session_state['map_clicked_x']}, {st.session_state['map_clicked_y']})",
+                value=(loc_edit == "➕ Создать в точке прицела 🎯")
+            )
+            final_x = st.session_state['map_clicked_x'] if move_to_crosshair else cur_x
+            final_y = st.session_state['map_clicked_y'] if move_to_crosshair else cur_y
 
             inp_lchars = st.multiselect("👥 Привязанные персонажи:", all_chars, default=l_chars)
             inp_lscrs = st.multiselect("🎬 Связанные сценарии:", all_scripts, default=l_scrs)
             inp_ldesc = st.text_area("Описание / Лор объекта:", value=l_desc, height=75)
 
-            b_save, b_del = st.columns([2, 1])
+            b_save, b_del = st.columns([1.6, 1.4])
             with b_save:
-                if st.button("💾 Сохранить на карте", type="primary", use_container_width=True):
+                if st.button("💾 Сохранить", type="primary", use_container_width=True):
                     if inp_lname.strip():
                         new_l_row = {
                             "Name": inp_lname.strip(),
@@ -2315,24 +2352,90 @@ elif app_mode == "🗺 Карта Местности":
                             "Linked_Scripts": ", ".join(inp_lscrs)
                         }
                         base_l = st.session_state['locations'][LOC_COLS]
-                        if loc_edit == "➕ Новый объект в точке 🎯":
+                        if loc_edit == "➕ Создать в точке прицела 🎯":
                             st.session_state['locations'] = pd.concat([base_l, pd.DataFrame([new_l_row])], ignore_index=True)
                         else:
                             idx_l = base_l[(base_l['Name'] == loc_edit) & (base_l['Region'] == active_region)].index[0]
                             for k, v in new_l_row.items():
                                 st.session_state['locations'].at[idx_l, k] = v
                         save_sheet("Locations", st.session_state['locations'][LOC_COLS])
+                        st.session_state['map_selected_item'] = inp_lname.strip()
                         st.success("Точка сохранена!")
                         st.rerun()
                     else:
                         st.warning("Введите название!")
             with b_del:
-                if loc_edit != "➕ Новый объект в точке 🎯":
-                    if st.button("🗑 Удалить", use_container_width=True):
+                if loc_edit != "➕ Создать в точке прицела 🎯":
+                    if st.button("🗑 Удалить с карты", use_container_width=True):
                         st.session_state['locations'] = df_loc[~((df_loc['Name'] == loc_edit) & (df_loc['Region'] == active_region))].reset_index(drop=True)
                         save_sheet("Locations", st.session_state['locations'][LOC_COLS])
+                        st.session_state['map_selected_item'] = "➕ Создать в точке прицела 🎯"
+                        st.success(f"«{loc_edit}» удален с карты!")
                         st.rerun()
 
+    # --- 4. СПИСОК ВСЕХ ТОЧЕК И ПЕРСОНАЖЕЙ НА КАРТЕ С БЫСТРЫМ УДАЛЕНИЕМ В 1 КЛИК ---
+    st.write("---")
+    tab_loc_cards, tab_loc_table = st.tabs([
+        f"📍 Все объекты и персонажи региона «{active_region}» ({len(reg_df)})",
+        "📋 Табличный редактор всех локаций (Массовое удаление)"
+    ])
+
+    with tab_loc_cards:
+        if reg_df.empty:
+            st.caption("На этой карте пока не размещено ни одного объекта или персонажа.")
+        else:
+            l_cols = st.columns(2)
+            for i_l, (orig_idx, l_item) in enumerate(reg_df.iterrows()):
+                with l_cols[i_l % 2]:
+                    st.markdown(f"""
+                    <div class="game-card">
+                        <div class="game-card-header">
+                            <span style="color:#ffcc00; font-size:12px;">🏛 {html.escape(str(l_item['Controlling_Faction']))}</span>
+                            <span class="game-card-type">{html.escape(str(l_item['Loc_Type']))} (X:{l_item['X']}, Y:{l_item['Y']})</span>
+                        </div>
+                        <div class="game-card-title">{html.escape(str(l_item['Name']))}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if l_item['Linked_Characters']:
+                        st.caption(f"👥 **Персонажи:** {l_item['Linked_Characters']}")
+                    if l_item['Linked_Scripts']:
+                        st.caption(f"🎬 **Сценарии:** {l_item['Linked_Scripts']}")
+                    if l_item['Description']:
+                        hl_ldesc, _ = render_text_with_spoilers_and_characters(
+                            str(l_item['Description']), CHAR_MATCHERS, CHAR_POPUP_SPANS, enable_spoilers=False
+                        )
+                        st.markdown(f"<div class='script-body' style='font-size:14px;'>{hl_ldesc}</div>", unsafe_allow_html=True)
+
+                    act_c1, act_c2 = st.columns(2)
+                    with act_c1:
+                        if st.button("✏️ Выбрать на карте", key=f"sel_loc_{orig_idx}", use_container_width=True):
+                            st.session_state['map_selected_item'] = str(l_item['Name'])
+                            st.session_state['map_clicked_x'] = float(l_item['X'])
+                            st.session_state['map_clicked_y'] = float(l_item['Y'])
+                            st.rerun()
+                    with act_c2:
+                        if st.button("🗑 Убрать с карты", key=f"del_loc_{orig_idx}", use_container_width=True):
+                            st.session_state['locations'] = df_loc.drop(index=orig_idx).reset_index(drop=True)
+                            save_sheet("Locations", st.session_state['locations'][LOC_COLS])
+                            if st.session_state.get('map_selected_item') == str(l_item['Name']):
+                                st.session_state['map_selected_item'] = "➕ Создать в точке прицела 🎯"
+                            st.rerun()
+
+    with tab_loc_table:
+        st.caption("💡 Здесь можно выделить галочками слева сразу несколько строк (локаций или персонажей) и нажать клавишу `Delete` или иконку корзины в правом верхнем углу таблицы:")
+        edited_locs = st.data_editor(
+            st.session_state['locations'][LOC_COLS],
+            num_rows="dynamic",
+            use_container_width=True,
+            height=400,
+            key="loc_table_editor"
+        )
+        if st.button("💾 Сохранить изменения в таблице локаций", type="primary"):
+            clean_locs = edited_locs.dropna(subset=['Name']).reset_index(drop=True)
+            st.session_state['locations'] = clean_locs
+            save_sheet("Locations", clean_locs[LOC_COLS])
+            st.success("Таблица локаций синхронизирована с облаком!")
+            st.rerun()
 # ==============================================================================
 # МОДУЛЬ 5: ХРОНОЛОГИЯ ВСЕЛЕННОЙ (TIMELINE ПО ЭПОХАМ И ИНДЕКСАМ)
 # ==============================================================================
