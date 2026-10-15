@@ -166,7 +166,7 @@ def save_config_to_cloud(config_dict):
     df = pd.DataFrame({"Settings": [json.dumps(config_dict, ensure_ascii=False)]})
     save_sheet("Config", df)
 
-# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ СВЯЗЕЙ ПЕРСОНАЖА ---
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ СВЯЗЕЙ И КАРТОЧЕК ---
 def get_character_relations(char_name, edges_df):
     if not char_name or edges_df.empty:
         return []
@@ -195,6 +195,16 @@ def resolve_linked_character(card_row, valid_chars_list):
         if ch.strip().lower() == card_name.lower():
             return ch
     return None
+
+def get_cards_for_character(char_name, cards_df):
+    if cards_df.empty or not char_name:
+        return pd.DataFrame(columns=CARD_COLS)
+    clean_name = str(char_name).strip().lower()
+    mask = (
+        (cards_df['Linked_Character'].astype(str).str.strip().str.lower() == clean_name) |
+        (cards_df['Name'].astype(str).str.strip().str.lower() == clean_name)
+    )
+    return cards_df[mask]
 
 # --- ЧТЕНИЕ ФАЙЛОВ С КОМПЬЮТЕРА (.DOCX, .TXT, .MD) ---
 def read_uploaded_document(uploaded_file):
@@ -271,6 +281,221 @@ def render_script_with_spoilers(raw_text):
     close_until(1)
     return "".join(html_out)
 
+# --- ВСТРАИВАНИЕ ИНТЕРАКТИВНОЙ КАРТОЧКИ ПРИ НАВЕДЕНИИ В HTML ГРАФА ---
+def inject_card_hover_into_graph(raw_html, node_popup_dict):
+    popup_json = json.dumps(node_popup_dict, ensure_ascii=False)
+    custom_injection = f"""
+    <style>
+        #graph-card-popup {{
+            position: fixed;
+            display: none;
+            z-index: 99999;
+            width: 265px;
+            background: rgba(24, 24, 36, 0.96);
+            border: 1px solid #00d4ff;
+            border-radius: 12px;
+            padding: 12px;
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.85), 0 0 12px rgba(0, 212, 255, 0.25);
+            pointer-events: none;
+            backdrop-filter: blur(6px);
+        }}
+        .gcp-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            margin-bottom: 4px;
+        }}
+        .gcp-faction {{ color: #ffcc00; font-weight: bold; text-transform: uppercase; }}
+        .gcp-type {{ background: #2b2b3d; color: #00d4ff; padding: 2px 6px; border-radius: 4px; font-weight: bold; }}
+        .gcp-title {{
+            font-family: 'Courier New', monospace;
+            font-size: 18px;
+            font-weight: bold;
+            color: #ffffff;
+            margin-bottom: 6px;
+            border-bottom: 1px solid #33334d;
+            padding-bottom: 4px;
+        }}
+        .gcp-img-wrap {{
+            width: 100%;
+            max-height: 195px;
+            overflow: hidden;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            text-align: center;
+            background: #12121a;
+        }}
+        .gcp-img-wrap img {{
+            width: 100%;
+            height: 195px;
+            object-fit: cover;
+            display: block;
+        }}
+        .gcp-stats {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 8px;
+            background: #232334;
+            padding: 6px 9px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            border-left: 3px solid #00d4ff;
+            margin-bottom: 6px;
+        }}
+        .gcp-stat-let {{ color: #00d4ff; font-weight: bold; margin-right: 4px; }}
+        .gcp-align {{
+            text-align: center;
+            padding: 4px;
+            border-radius: 5px;
+            font-weight: bold;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 6px;
+        }}
+        .gcp-hero {{ background: rgba(77, 166, 255, 0.2); color: #4da6ff; border: 1px solid #4da6ff; }}
+        .gcp-villain {{ background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }}
+        .gcp-neutral {{ background: rgba(255, 204, 0, 0.2); color: #ffcc00; border: 1px solid #ffcc00; }}
+        .gcp-desc {{ font-size: 12px; color: #cccccc; margin-bottom: 6px; line-height: 1.35; }}
+        .gcp-bonuses {{ font-size: 11px; color: #ff99cc; margin-bottom: 6px; }}
+        .gcp-lore {{
+            font-size: 11px;
+            color: #aaaaaa;
+            border-top: 1px solid #2e2e42;
+            padding-top: 5px;
+            line-height: 1.4;
+        }}
+    </style>
+
+    <div id="graph-card-popup"></div>
+
+    <script type="text/javascript">
+        (function() {{
+            const popupData = {popup_json};
+            const popupEl = document.getElementById('graph-card-popup');
+            let isPinned = false;
+
+            function escapeHtml(str) {{
+                if (!str) return "";
+                return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+            }}
+
+            function buildCardHtml(nodeId) {{
+                const info = popupData[nodeId];
+                if (!info) return "";
+
+                let html = "";
+                if (info.has_card) {{
+                    let alignClass = "gcp-neutral";
+                    if (info.alignment === "Герой") alignClass = "gcp-hero";
+                    else if (info.alignment === "Злодей") alignClass = "gcp-villain";
+
+                    html += `<div class="gcp-header">
+                                <span class="gcp-faction">${{escapeHtml(info.faction)}}</span>
+                                <span class="gcp-type">${{escapeHtml(info.card_type)}}</span>
+                             </div>`;
+                    html += `<div class="gcp-title">${{escapeHtml(info.card_name)}}</div>`;
+                    if (info.image) {{
+                        html += `<div class="gcp-img-wrap"><img src="${{info.image}}" alt="card"/></div>`;
+                    }}
+                    html += `<div class="gcp-stats">
+                                <div><span class="gcp-stat-let">С</span>${{info.str}}</div>
+                                <div><span class="gcp-stat-let">Л</span>${{info.agi}}</div>
+                                <div><span class="gcp-stat-let">М</span>${{info.mas}}</div>
+                                <div><span class="gcp-stat-let">С</span>${{info.wit}}</div>
+                             </div>`;
+                    html += `<div class="gcp-align ${{alignClass}}">${{escapeHtml(info.alignment)}}</div>`;
+                    if (info.desc) {{
+                        html += `<div class="gcp-desc">${{escapeHtml(info.desc)}}</div>`;
+                    }}
+                    if (info.bonuses && info.bonuses.length > 0) {{
+                        html += `<div class="gcp-bonuses">🎁 <b>Бонусы:</b> ${{escapeHtml(info.bonuses.join(', '))}}</div>`;
+                    }}
+                }} else {{
+                    html += `<div class="gcp-title">👤 ${{escapeHtml(nodeId)}}</div>`;
+                }}
+
+                if (info.lore && info.lore.length > 0) {{
+                    html += `<div class="gcp-lore">` + info.lore.map(item => `▪ ${{escapeHtml(item)}}`).join('<br>') + `</div>`;
+                }}
+                return html;
+            }}
+
+            function positionPopup(nodeId) {{
+                if (typeof network === 'undefined') return;
+                const pos = network.getPositions([nodeId])[nodeId];
+                if (!pos) return;
+                const domPos = network.canvasToDOM(pos);
+                const pad = 18;
+                let left = domPos.x + 24;
+                let top = domPos.y - 40;
+
+                const rect = popupEl.getBoundingClientRect();
+                const w = rect.width || 275;
+                const h = rect.height || 360;
+
+                if (left + w + pad > window.innerWidth) {{
+                    left = Math.max(pad, domPos.x - w - 24);
+                }}
+                if (top + h + pad > window.innerHeight) {{
+                    top = Math.max(pad, window.innerHeight - h - pad);
+                }}
+                if (top < pad) top = pad;
+
+                popupEl.style.left = left + 'px';
+                popupEl.style.top = top + 'px';
+            }}
+
+            if (typeof network !== 'undefined') {{
+                network.setOptions({{ interaction: {{ hover: true, tooltipDelay: 50 }} }});
+
+                network.on("hoverNode", function(params) {{
+                    if (isPinned) return;
+                    const content = buildCardHtml(params.node);
+                    if (content) {{
+                        popupEl.innerHTML = content;
+                        popupEl.style.display = 'block';
+                        positionPopup(params.node);
+                    }}
+                }});
+
+                network.on("blurNode", function() {{
+                    if (!isPinned) {{
+                        popupEl.style.display = 'none';
+                    }}
+                }});
+
+                network.on("selectNode", function(params) {{
+                    if (params.nodes.length > 0) {{
+                        const nodeId = params.nodes[0];
+                        const content = buildCardHtml(nodeId);
+                        if (content) {{
+                            isPinned = true;
+                            popupEl.innerHTML = content;
+                            popupEl.style.display = 'block';
+                            positionPopup(nodeId);
+                        }}
+                    }}
+                }});
+
+                network.on("deselectNode", function() {{
+                    isPinned = false;
+                    popupEl.style.display = 'none';
+                }});
+
+                network.on("dragStart", function() {{
+                    if (!isPinned) popupEl.style.display = 'none';
+                }});
+            }}
+        }})();
+    </script>
+    """
+    return raw_html.replace("</body>", custom_injection + "\n</body>")
+
 # --- ИНИЦИАЛИЗАЦИЯ ДАННЫХ ---
 if 'nodes' not in st.session_state:
     n, e, a, c, s = load_all_data()
@@ -316,7 +541,6 @@ if app_mode == "🌐 Персонажи и Граф":
         "🕸 Интерактивный Граф", "🗂 Досье Персонажа", "👤 Таблица Персонажей", "🔗 Таблица Связей", "📊 Статистика"
     ])
 
-    # --- ВКЛАДКА ДОСЬЕ ПЕРСОНАЖА (ОБЪЕДИНЯЕТ ГРАФ И КАРТОЧКИ) ---
     with tab_dossier:
         all_chars_list = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
         if not all_chars_list:
@@ -350,11 +574,7 @@ if app_mode == "🌐 Персонажи и Граф":
 
             with d_col2:
                 st.subheader("🃏 Привязанные карточки и бонусы")
-                df_c_all = st.session_state['cards']
-                linked_cards = df_c_all[
-                    (df_c_all['Linked_Character'].astype(str).str.strip() == sel_hero) |
-                    (df_c_all['Name'].astype(str).str.strip().str.lower() == sel_hero.lower())
-                ]
+                linked_cards = get_cards_for_character(sel_hero, st.session_state['cards'])
                 if not linked_cards.empty:
                     c_cols = st.columns(2)
                     for idx_c, (_, crd) in enumerate(linked_cards.iterrows()):
@@ -520,6 +740,8 @@ if app_mode == "🌐 Персонажи и Граф":
         color_options = [c for c in st.session_state['nodes'].columns if c not in ["Имя / Название персонажа", "Заметки"]]
         if color_options:
             color_by = st.sidebar.selectbox("🎨 Раскрашивать граф по:", color_options)
+            show_card_avatars = st.sidebar.checkbox("🖼 Арт карточки внутри кружочка узла", value=True)
+            
             active_filters = {}
             with st.sidebar.expander("🌪 Фильтры графа", expanded=False):
                 for col in color_options:
@@ -534,22 +756,75 @@ if app_mode == "🌐 Персонажи и Граф":
             df_e = st.session_state['edges']
             filtered_edges = df_e[(df_e['Source'].isin(valid_names)) & (df_e['Target'].isin(valid_names))]
 
-            net = Network(height='700px', width='100%', bgcolor='#181820', font_color='white')
+            net = Network(height='720px', width='100%', bgcolor='#181820', font_color='white')
             net.force_atlas_2based(gravity=-35)
 
             unique_color_targets = df_n[color_by].dropna().unique().tolist()
+            node_popup_dict = {}
+            all_cards_df = st.session_state['cards']
+
             for _, row in df_n.iterrows():
                 name = str(row['Имя / Название персонажа']).strip()
                 plan = str(row.get('Категория плана', '3 план'))
                 val = str(row.get(color_by, 'Не указано'))
+                
                 saved_color = st.session_state['config']['colors'].get(color_by, {}).get(val)
                 if not saved_color:
                     color_idx = unique_color_targets.index(val) if val in unique_color_targets else 0
                     saved_color = PALETTE[color_idx % len(PALETTE)]
-                    if val == "Не указано": saved_color = "#ffffff"
-                size = 25 if '1' in plan else (15 if '2' in plan else 10)
-                hover_text = f"👤 {name}\n" + "\n".join([f"▪ {c}: {row.get(c, 'Не указано')}" for c in color_options])
-                net.add_node(name, label=name, size=size, color=saved_color, title=hover_text)
+                    if val == "Не указано":
+                        saved_color = "#ffffff"
+                        
+                size = 28 if '1' in plan else (18 if '2' in plan else 12)
+                lore_lines = [f"{c}: {row.get(c, 'Не указано')}" for c in color_options if str(row.get(c, 'Не указано')) != 'Не указано']
+                if str(row.get('Заметки', '')).strip() not in ['', 'Не указано']:
+                    lore_lines.append(f"Лор: {row.get('Заметки')}")
+
+                # Ищем привязанные к персонажу карточки
+                char_cards = get_cards_for_character(name, all_cards_df)
+                main_card = None
+                bonus_names = []
+                if not char_cards.empty:
+                    pers_cards = char_cards[char_cards['Card_Type'] == 'Персонаж']
+                    main_card = pers_cards.iloc[0] if not pers_cards.empty else char_cards.iloc[0]
+                    bonus_cards = char_cards[char_cards['Card_Type'] == 'Бонус']
+                    bonus_names = bonus_cards['Name'].tolist()
+
+                if main_card is not None:
+                    card_img_str = str(main_card.get('Image_Data', '')).strip()
+                    node_popup_dict[name] = {
+                        "has_card": True,
+                        "card_name": str(main_card.get('Name', name)),
+                        "card_type": str(main_card.get('Card_Type', 'Персонаж')),
+                        "alignment": str(main_card.get('Alignment', 'Нейтралитет')),
+                        "faction": str(main_card.get('Faction', '')),
+                        "str": int(main_card.get('Strength', 0)),
+                        "agi": int(main_card.get('Agility', 0)),
+                        "mas": int(main_card.get('Mastery', 0)),
+                        "wit": int(main_card.get('Wit', 0)),
+                        "desc": str(main_card.get('Description', '')),
+                        "image": card_img_str,
+                        "bonuses": bonus_names,
+                        "lore": lore_lines
+                    }
+                    if show_card_avatars and card_img_str:
+                        net.add_node(
+                            name,
+                            label=name,
+                            size=size + 6,
+                            shape='circularImage',
+                            image=card_img_str,
+                            borderWidth=4,
+                            color={'border': saved_color, 'background': '#1b1b26', 'highlight': {'border': '#00d4ff'}}
+                        )
+                    else:
+                        net.add_node(name, label=name, size=size, color=saved_color)
+                else:
+                    node_popup_dict[name] = {
+                        "has_card": False,
+                        "lore": lore_lines
+                    }
+                    net.add_node(name, label=name, size=size, color=saved_color)
 
             added_nodes = net.get_nodes()
             for _, row in filtered_edges.iterrows():
@@ -565,7 +840,9 @@ if app_mode == "🌐 Персонажи и Граф":
 
             net.save_graph('pyvis_graph.html')
             with open('pyvis_graph.html', 'r', encoding='utf-8') as f:
-                components.html(f.read(), height=730)
+                raw_graph_html = f.read()
+            enhanced_graph_html = inject_card_hover_into_graph(raw_graph_html, node_popup_dict)
+            components.html(enhanced_graph_html, height=750)
 
 
 # ==============================================================================
@@ -676,7 +953,6 @@ elif app_mode == "🃏 Галерея Карточек":
 
                         save_sheet("Cards", st.session_state['cards'][CARD_COLS])
 
-                        # Если включено автодобавление персонажа на граф
                         if auto_add_to_graph and c_type == "Персонаж" and resolved_link not in valid_graph_chars:
                             new_node_row = {col: "Не указано" for col in st.session_state['nodes'].columns}
                             new_node_row['Имя / Название персонажа'] = resolved_link
@@ -703,7 +979,6 @@ elif app_mode == "🃏 Галерея Карточек":
 
         st.write("---")
 
-        # --- ПАНЕЛЬ ФАСОВКИ И СОРТИРОВКИ КАРТОЧЕК ---
         if not df_cards.empty:
             f1, f2, f3, f4 = st.columns(4)
             with f1:
@@ -786,7 +1061,6 @@ elif app_mode == "🃏 Галерея Карточек":
                     if card['Description']:
                         st.caption(card['Description'])
 
-                    # --- БЛОК ИНТЕГРАЦИИ С ГРАФОМ: ПРОФИЛЬ И СВЯЗИ ПЕРСОНАЖА ---
                     linked_hero = resolve_linked_character(card, valid_graph_chars)
                     if linked_hero:
                         rels = get_character_relations(linked_hero, st.session_state['edges'])
@@ -812,7 +1086,6 @@ elif app_mode == "🃏 Галерея Карточек":
                             else:
                                 st.caption("Связей на графе пока нет.")
 
-                            # Быстрое добавление новой связи прямо из карточки
                             st.markdown("---")
                             st.caption("➕ **Быстро добавить связь:**")
                             other_chars = [c for c in valid_graph_chars if c != linked_hero]
@@ -836,7 +1109,6 @@ elif app_mode == "🃏 Галерея Карточек":
         else:
             st.info("В базе пока нет карточек. Добавьте первую карточку через панель выше!")
 
-    # --- ВКЛАДКА СТАТИСТИКИ И БАЛАНСА КАРТОЧЕК ---
     with tab_card_stats:
         if df_cards.empty:
             st.info("Добавьте карточки, чтобы увидеть статистику и баланс.")
