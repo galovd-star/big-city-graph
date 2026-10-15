@@ -69,10 +69,24 @@ st.markdown("""
         text-transform: uppercase;
         letter-spacing: 1px;
         margin-top: 8px;
+        margin-bottom: 6px;
     }
     .align-hero { background-color: rgba(77, 166, 255, 0.2); color: #4da6ff; border: 1px solid #4da6ff; }
     .align-villain { background-color: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
     .align-neutral { background-color: rgba(255, 204, 0, 0.2); color: #ffcc00; border: 1px solid #ffcc00; }
+
+    /* Плашки связей внутри карточки */
+    .rel-pill {
+        padding: 5px 10px;
+        border-radius: 6px;
+        margin-bottom: 5px;
+        font-size: 13px;
+        display: flex;
+        justify-content: space-between;
+    }
+    .rel-ally { background-color: rgba(77, 166, 255, 0.15); border-left: 3px solid #4da6ff; color: #d9ecff; }
+    .rel-enemy { background-color: rgba(255, 77, 77, 0.15); border-left: 3px solid #ff4d4d; color: #ffd9d9; }
+    .rel-neutral { background-color: rgba(160, 160, 160, 0.15); border-left: 3px solid #999999; color: #e0e0e0; }
     
     /* Стили для скрытых заголовков и подзаголовков в Сценариях */
     details.lvl1 { background-color: #1b1b26; border-left: 4px solid #00d4ff; border-radius: 6px; padding: 10px 15px; margin: 12px 0; }
@@ -90,7 +104,11 @@ PALETTE = ["#ff4d4d", "#4da6ff", "#9933ff", "#33cc33", "#ffcc00", "#ff66b2", "#3
 # --- ПОДКЛЮЧЕНИЕ К GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-CARD_COLS = ['Name', 'Card_Type', 'Alignment', 'Faction', 'Strength', 'Agility', 'Mastery', 'Wit', 'Description', 'Image_Data']
+CARD_COLS = [
+    'Name', 'Card_Type', 'Alignment', 'Faction',
+    'Strength', 'Agility', 'Mastery', 'Wit',
+    'Description', 'Image_Data', 'Linked_Character'
+]
 
 def safe_read_sheet(worksheet_name, default_cols):
     try:
@@ -106,7 +124,7 @@ def safe_read_sheet(worksheet_name, default_cols):
                     df[col] = 'Персонаж'
                 elif col == 'Alignment':
                     df[col] = 'Нейтралитет'
-                elif col in ["Content", "Image_Data", "Заметки", "Description"]:
+                elif col in ["Content", "Image_Data", "Заметки", "Description", "Linked_Character"]:
                     df[col] = ""
                 else:
                     df[col] = "Не указано"
@@ -147,6 +165,36 @@ def save_sheet(worksheet_name, df):
 def save_config_to_cloud(config_dict):
     df = pd.DataFrame({"Settings": [json.dumps(config_dict, ensure_ascii=False)]})
     save_sheet("Config", df)
+
+# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ СВЯЗЕЙ ПЕРСОНАЖА ---
+def get_character_relations(char_name, edges_df):
+    if not char_name or edges_df.empty:
+        return []
+    char_clean = str(char_name).strip()
+    rels = []
+    for _, row in edges_df.iterrows():
+        src = str(row.get('Source', '')).strip()
+        tgt = str(row.get('Target', '')).strip()
+        rtype = str(row.get('Type', 'Связь')).strip()
+        try:
+            w = int(float(row.get('Weight', 1)))
+        except ValueError:
+            w = 1
+        if src == char_clean:
+            rels.append({"partner": tgt, "type": rtype, "weight": w, "dir": "→"})
+        elif tgt == char_clean:
+            rels.append({"partner": src, "type": rtype, "weight": w, "dir": "←"})
+    return rels
+
+def resolve_linked_character(card_row, valid_chars_list):
+    explicit_link = str(card_row.get('Linked_Character', '')).strip()
+    if explicit_link and explicit_link != "— Нет привязки —" and explicit_link in valid_chars_list:
+        return explicit_link
+    card_name = str(card_row.get('Name', '')).strip()
+    for ch in valid_chars_list:
+        if ch.strip().lower() == card_name.lower():
+            return ch
+    return None
 
 # --- ЧТЕНИЕ ФАЙЛОВ С КОМПЬЮТЕРА (.DOCX, .TXT, .MD) ---
 def read_uploaded_document(uploaded_file):
@@ -260,13 +308,83 @@ if st.sidebar.button("🔄 Синхронизировать с облаком", 
 
 
 # ==============================================================================
-# МОДУЛЬ 1: ПЕРСОНАЖИ, ГРАФ И СТАТИСТИКА
+# МОДУЛЬ 1: ПЕРСОНАЖИ, ГРАФ, ДОСЬЕ И СТАТИСТИКА
 # ==============================================================================
 if app_mode == "🌐 Персонажи и Граф":
     st.title("🌐 База Персонажей и Карта Связей")
-    tab_graph, tab_chars, tab_edges, tab_stats = st.tabs([
-        "🕸 Интерактивный Граф", "👤 Персонажи", "🔗 Связи", "📊 Статистика"
+    tab_graph, tab_dossier, tab_chars, tab_edges, tab_stats = st.tabs([
+        "🕸 Интерактивный Граф", "🗂 Досье Персонажа", "👤 Таблица Персонажей", "🔗 Таблица Связей", "📊 Статистика"
     ])
+
+    # --- ВКЛАДКА ДОСЬЕ ПЕРСОНАЖА (ОБЪЕДИНЯЕТ ГРАФ И КАРТОЧКИ) ---
+    with tab_dossier:
+        all_chars_list = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
+        if not all_chars_list:
+            st.info("База персонажей пока пуста.")
+        else:
+            sel_hero = st.selectbox("🔍 Выберите персонажа для просмотра полного досье:", all_chars_list)
+            hero_row = st.session_state['nodes'][st.session_state['nodes']['Имя / Название персонажа'] == sel_hero].iloc[0]
+            
+            d_col1, d_col2 = st.columns([1.2, 1.8])
+            with d_col1:
+                st.subheader(f"👤 {sel_hero}")
+                for col_n in st.session_state['nodes'].columns:
+                    if col_n != 'Имя / Название персонажа':
+                        st.markdown(f"**{col_n}:** {hero_row.get(col_n, 'Не указано')}")
+                
+                st.write("---")
+                st.markdown("#### 🔗 Связи на графе")
+                hero_rels = get_character_relations(sel_hero, st.session_state['edges'])
+                if hero_rels:
+                    for r in hero_rels:
+                        t_low = r['type'].lower()
+                        css_c = "rel-enemy" if t_low in ['вражда', 'конфликт'] else ("rel-ally" if t_low in ['союз', 'родство', 'подчинение'] else "rel-neutral")
+                        st.markdown(f"""
+                        <div class="rel-pill {css_c}">
+                            <span><b>{html.escape(r['partner'])}</b> ({html.escape(r['type'])})</span>
+                            <span>Сила: {'⭐' * r['weight']}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.caption("У этого персонажа пока нет зафиксированных связей.")
+
+            with d_col2:
+                st.subheader("🃏 Привязанные карточки и бонусы")
+                df_c_all = st.session_state['cards']
+                linked_cards = df_c_all[
+                    (df_c_all['Linked_Character'].astype(str).str.strip() == sel_hero) |
+                    (df_c_all['Name'].astype(str).str.strip().str.lower() == sel_hero.lower())
+                ]
+                if not linked_cards.empty:
+                    c_cols = st.columns(2)
+                    for idx_c, (_, crd) in enumerate(linked_cards.iterrows()):
+                        with c_cols[idx_c % 2]:
+                            al_str = str(crd['Alignment'])
+                            al_cls = "align-hero" if al_str == "Герой" else ("align-villain" if al_str == "Злодей" else "align-neutral")
+                            st.markdown(f"""
+                            <div class="game-card">
+                                <div class="game-card-header">
+                                    <span style="color:#ffcc00; font-size:12px;">{html.escape(str(crd['Faction']))}</span>
+                                    <span class="game-card-type">{html.escape(str(crd['Card_Type']))}</span>
+                                </div>
+                                <div class="game-card-title">{html.escape(str(crd['Name']))}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            if crd['Image_Data']:
+                                st.image(crd['Image_Data'], use_container_width=True)
+                            st.markdown(f"""
+                            <div class="stats-grid">
+                                <div class="stat-item"><span class="stat-letter">С</span>{int(crd['Strength'])}</div>
+                                <div class="stat-item"><span class="stat-letter">Л</span>{int(crd['Agility'])}</div>
+                                <div class="stat-item"><span class="stat-letter">М</span>{int(crd['Mastery'])}</div>
+                                <div class="stat-item"><span class="stat-letter">С</span>{int(crd['Wit'])}</div>
+                            </div>
+                            <div class="alignment-badge {al_cls}">{html.escape(al_str)}</div>
+                            """, unsafe_allow_html=True)
+                            if crd['Description']:
+                                st.caption(crd['Description'])
+                else:
+                    st.info("К этому персонажу пока не привязано ни одной игровой карточки в Галерее.")
 
     with tab_stats:
         st.subheader("Аналитика и распределение сил")
@@ -305,7 +423,7 @@ if app_mode == "🌐 Персонажи и Граф":
         protected_cols = ["Имя / Название персонажа", "Заметки"]
         custom_cols = [c for c in st.session_state['nodes'].columns if c not in protected_cols]
 
-        with st.expander("🔄 Умное переименование персонажа (С сохранением связей)"):
+        with st.expander("🔄 Умное переименование персонажа (С сохранением связей и карточек)"):
             all_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
             old_name = st.selectbox("Выберите персонажа:", all_chars) if all_chars else None
             new_char_name = st.text_input("Новое имя:").strip()
@@ -314,9 +432,11 @@ if app_mode == "🌐 Персонажи и Граф":
                     st.session_state['nodes']['Имя / Название персонажа'] = st.session_state['nodes']['Имя / Название персонажа'].replace(old_name, new_char_name)
                     st.session_state['edges']['Source'] = st.session_state['edges']['Source'].replace(old_name, new_char_name)
                     st.session_state['edges']['Target'] = st.session_state['edges']['Target'].replace(old_name, new_char_name)
+                    st.session_state['cards']['Linked_Character'] = st.session_state['cards']['Linked_Character'].replace(old_name, new_char_name)
                     save_sheet("Nodes", st.session_state['nodes'])
                     save_sheet("Edges", st.session_state['edges'])
-                    st.success("Имя обновлено везде!")
+                    save_sheet("Cards", st.session_state['cards'][CARD_COLS])
+                    st.success("Имя обновлено в базе, на графе и в карточках!")
                     st.rerun()
 
         col_menu1, col_menu2 = st.columns(2)
@@ -449,7 +569,7 @@ if app_mode == "🌐 Персонажи и Граф":
 
 
 # ==============================================================================
-# МОДУЛЬ 2: ГАЛЕРЕЯ КАРТОЧЕК И БАЛАНС КОЛОДЫ
+# МОДУЛЬ 2: ГАЛЕРЕЯ КАРТОЧЕК, СВЯЗИ НА ГРАФЕ И БАЛАНС КОЛОДЫ
 # ==============================================================================
 elif app_mode == "🃏 Галерея Карточек":
     st.title("🃏 Игровые Карточки БИГ СИТИ")
@@ -458,6 +578,8 @@ elif app_mode == "🃏 Галерея Карточек":
         df_cards[s_col] = pd.to_numeric(df_cards[s_col], errors='coerce').fillna(0).astype(int)
     df_cards['Total_Power'] = df_cards['Strength'] + df_cards['Agility'] + df_cards['Mastery'] + df_cards['Wit']
 
+    valid_graph_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
+
     tab_gallery, tab_card_stats = st.tabs(["🃏 Коллекция и Конструктор", "📊 Статистика и Баланс Карточек"])
 
     with tab_gallery:
@@ -465,7 +587,7 @@ elif app_mode == "🃏 Галерея Карточек":
             edit_mode = st.selectbox("Выберите карточку для редактирования или создайте новую:", ["Создать новую карточку"] + df_cards['Name'].tolist())
             
             if edit_mode == "Создать новую карточку":
-                c_name_val, c_type_val, c_align_val, c_fac_val, c_desc_val, c_img_val = "", "Персонаж", "Нейтралитет", "", "", ""
+                c_name_val, c_type_val, c_align_val, c_fac_val, c_desc_val, c_img_val, c_link_val = "", "Персонаж", "Нейтралитет", "", "", "", "— Авто / По имени —"
                 s_str, s_agi, s_mas, s_wit = 8000, 8000, 8000, 8000
             else:
                 row_c = df_cards[df_cards['Name'] == edit_mode].iloc[0]
@@ -475,6 +597,8 @@ elif app_mode == "🃏 Галерея Карточек":
                 c_fac_val = str(row_c['Faction'])
                 c_desc_val = str(row_c['Description'])
                 c_img_val = str(row_c['Image_Data'])
+                saved_link = str(row_c.get('Linked_Character', '')).strip()
+                c_link_val = saved_link if saved_link in valid_graph_chars else "— Авто / По имени —"
                 s_str, s_agi, s_mas, s_wit = int(row_c['Strength']), int(row_c['Agility']), int(row_c['Mastery']), int(row_c['Wit'])
 
             col_f1, col_f2 = st.columns(2)
@@ -487,6 +611,10 @@ elif app_mode == "🃏 Галерея Карточек":
                 with tc2:
                     align_opts = ["Герой", "Злодей", "Нейтралитет"]
                     c_align = st.selectbox("Класс (снизу карточки):", align_opts, index=align_opts.index(c_align_val))
+                
+                link_options = ["— Авто / По имени —"] + valid_graph_chars
+                c_link_idx = link_options.index(c_link_val) if c_link_val in link_options else 0
+                c_linked_char = st.selectbox("🔗 Привязка к профилю на графе:", link_options, index=c_link_idx)
                 c_fac = st.text_input("Фракция / Принадлежность:", value=c_fac_val)
 
             with col_f2:
@@ -498,6 +626,11 @@ elif app_mode == "🃏 Галерея Карточек":
                 with st2:
                     val_agi = st.number_input("⚡ Ловкость (Л):", value=s_agi, step=10)
                     val_wit = st.number_input("🧠 Смекалка (С):", value=s_wit, step=10)
+                
+                auto_add_to_graph = st.checkbox(
+                    "🌐 Автоматически добавить персонажа в базу Графа (если его там ещё нет)",
+                    value=(c_type == "Персонаж")
+                )
 
             img_col1, img_col2 = st.columns(2)
             with img_col1:
@@ -517,6 +650,8 @@ elif app_mode == "🃏 Галерея Карточек":
                         elif c_url.strip():
                             final_img = c_url.strip()
 
+                        resolved_link = c_name.strip() if c_linked_char == "— Авто / По имени —" else c_linked_char
+
                         new_card_data = {
                             "Name": c_name.strip(),
                             "Card_Type": c_type,
@@ -527,7 +662,8 @@ elif app_mode == "🃏 Галерея Карточек":
                             "Mastery": int(val_mas),
                             "Wit": int(val_wit),
                             "Description": c_desc.strip(),
-                            "Image_Data": final_img
+                            "Image_Data": final_img,
+                            "Linked_Character": resolved_link
                         }
 
                         base_df = st.session_state['cards'][CARD_COLS]
@@ -539,7 +675,22 @@ elif app_mode == "🃏 Галерея Карточек":
                                 st.session_state['cards'].at[idx, k] = v
 
                         save_sheet("Cards", st.session_state['cards'][CARD_COLS])
-                        st.success(f"Карточка «{c_name.strip()}» сохранена!")
+
+                        # Если включено автодобавление персонажа на граф
+                        if auto_add_to_graph and c_type == "Персонаж" and resolved_link not in valid_graph_chars:
+                            new_node_row = {col: "Не указано" for col in st.session_state['nodes'].columns}
+                            new_node_row['Имя / Название персонажа'] = resolved_link
+                            new_node_row['Категория плана'] = '1 план'
+                            if 'Группировка' in new_node_row:
+                                new_node_row['Группировка'] = c_fac.strip() or "Не указано"
+                            if 'Амплуа' in new_node_row:
+                                new_node_row['Амплуа'] = c_align
+                            if 'Заметки' in new_node_row:
+                                new_node_row['Заметки'] = c_desc.strip()
+                            st.session_state['nodes'] = pd.concat([st.session_state['nodes'], pd.DataFrame([new_node_row])], ignore_index=True)
+                            save_sheet("Nodes", st.session_state['nodes'])
+
+                        st.success(f"Карточка «{c_name.strip()}» успешно сохранена и синхронизирована с графом!")
                         st.rerun()
                     else:
                         st.warning("Укажите название карточки!")
@@ -573,7 +724,7 @@ elif app_mode == "🃏 Галерея Карточек":
                     "По алфавиту (А-Я)"
                 ])
 
-            search_q = st.text_input("🔍 Быстрый поиск по имени карточки или тексту эффекта:")
+            search_q = st.text_input("🔍 Быстрый поиск по имени карточки, персонажу или тексту эффекта:")
 
             view_cards = df_cards.copy()
             if filter_type != "Все":
@@ -584,7 +735,11 @@ elif app_mode == "🃏 Галерея Карточек":
                 view_cards = view_cards[view_cards['Faction'] == filter_fac]
             if search_q.strip():
                 q = search_q.strip().lower()
-                view_cards = view_cards[view_cards['Name'].str.lower().str.contains(q) | view_cards['Description'].str.lower().str.contains(q)]
+                view_cards = view_cards[
+                    view_cards['Name'].str.lower().str.contains(q) |
+                    view_cards['Description'].str.lower().str.contains(q) |
+                    view_cards['Linked_Character'].astype(str).str.lower().str.contains(q)
+                ]
 
             sort_map = {
                 "Общая мощь (по убыванию)": ("Total_Power", False),
@@ -630,6 +785,53 @@ elif app_mode == "🃏 Галерея Карточек":
 
                     if card['Description']:
                         st.caption(card['Description'])
+
+                    # --- БЛОК ИНТЕГРАЦИИ С ГРАФОМ: ПРОФИЛЬ И СВЯЗИ ПЕРСОНАЖА ---
+                    linked_hero = resolve_linked_character(card, valid_graph_chars)
+                    if linked_hero:
+                        rels = get_character_relations(linked_hero, st.session_state['edges'])
+                        with st.expander(f"🔗 Связи на графе: {linked_hero} ({len(rels)})"):
+                            hero_info = st.session_state['nodes'][st.session_state['nodes']['Имя / Название персонажа'] == linked_hero].iloc[0]
+                            meta_parts = [f"**{c}**: {hero_info[c]}" for c in st.session_state['nodes'].columns if c not in ['Имя / Название персонажа', 'Заметки'] and str(hero_info[c]) != 'Не указано']
+                            if meta_parts:
+                                st.markdown(" • ".join(meta_parts))
+                            if str(hero_info.get('Заметки', '')).strip() not in ['', 'Не указано']:
+                                st.caption(f"📝 {hero_info['Заметки']}")
+
+                            if rels:
+                                for r in rels:
+                                    t_low = r['type'].lower()
+                                    css_c = "rel-enemy" if t_low in ['вражда', 'конфликт'] else ("rel-ally" if t_low in ['союз', 'родство', 'подчинение'] else "rel-neutral")
+                                    icon = "⚔️" if css_c == "rel-enemy" else ("🤝" if css_c == "rel-ally" else "⚖️")
+                                    st.markdown(f"""
+                                    <div class="rel-pill {css_c}">
+                                        <span>{icon} <b>{html.escape(r['partner'])}</b> — {html.escape(r['type'])}</span>
+                                        <span>{'⭐' * r['weight']}</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            else:
+                                st.caption("Связей на графе пока нет.")
+
+                            # Быстрое добавление новой связи прямо из карточки
+                            st.markdown("---")
+                            st.caption("➕ **Быстро добавить связь:**")
+                            other_chars = [c for c in valid_graph_chars if c != linked_hero]
+                            if other_chars:
+                                qc1, qc2 = st.columns(2)
+                                with qc1:
+                                    q_target = st.selectbox("С кем:", other_chars, key=f"qt_{i}_{card['Name']}")
+                                with qc2:
+                                    q_type = st.selectbox("Тип:", ["Союз", "Вражда", "Родство", "Подчинение", "Конфликт", "Нейтрально"], key=f"qtp_{i}_{card['Name']}")
+                                q_weight = st.slider("Сила связи:", 1, 5, 3, key=f"qw_{i}_{card['Name']}")
+                                if st.button("Добавить связь на граф", key=f"qbtn_{i}_{card['Name']}", use_container_width=True):
+                                    new_edge = pd.DataFrame([{"Source": linked_hero, "Target": q_target, "Type": q_type, "Weight": q_weight}])
+                                    st.session_state['edges'] = pd.concat([st.session_state['edges'], new_edge], ignore_index=True)
+                                    save_sheet("Edges", st.session_state['edges'])
+                                    st.success("Связь добавлена!")
+                                    st.rerun()
+                    else:
+                        st.caption("⚪ *Персонаж еще не привязан к графу*")
+
                     st.write("---")
         else:
             st.info("В базе пока нет карточек. Добавьте первую карточку через панель выше!")
