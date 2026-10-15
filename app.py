@@ -9,6 +9,7 @@ import base64
 from io import BytesIO
 from PIL import Image
 import html
+import re
 import docx
 
 # --- НАСТРОЙКИ СТРАНИЦЫ ---
@@ -18,10 +19,10 @@ st.set_page_config(layout="wide", page_title="БИГ СИТИ: Экосисте�
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1MyQ3vqstgSAarY9NtsAl1f1tnlbgmi-2iljHMf97zBM/edit?gid=0#gid=0"
 
 if SHEET_URL == "ВСТАВЬТЕ_ССЫЛКУ_СЮДА":
-    st.error("⚠️ Откройте код app.py на GitHub и вставьте настоящую ссылку на вашу Google Таблицу в переменную SHEET_URL (строка 19).")
+    st.error("⚠️ Откройте код app.py на GitHub и вставьте настоящую ссылку на вашу Google Таблицу в переменную SHEET_URL (строка 20).")
     st.stop()
 
-# --- КАСТОМНЫЙ ДИЗАЙН И СТИЛИ КАРТОЧЕК ---
+# --- КАСТОМНЫЙ ДИЗАЙН, СТИЛИ КАРТОЧЕК И ВСПЛЫВАЮЩИХ ИМЁН В ТЕКСТЕ ---
 st.markdown("""
 <style>
     [data-testid="stAppViewContainer"] { background-color: #121212; }
@@ -75,7 +76,7 @@ st.markdown("""
     .align-villain { background-color: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
     .align-neutral { background-color: rgba(255, 204, 0, 0.2); color: #ffcc00; border: 1px solid #ffcc00; }
 
-    /* Плашки связей внутри карточки */
+    /* Плашки связей */
     .rel-pill {
         padding: 5px 10px;
         border-radius: 6px;
@@ -89,13 +90,78 @@ st.markdown("""
     .rel-neutral { background-color: rgba(160, 160, 160, 0.15); border-left: 3px solid #999999; color: #e0e0e0; }
     
     /* Стили для скрытых заголовков и подзаголовков в Сценариях */
-    details.lvl1 { background-color: #1b1b26; border-left: 4px solid #00d4ff; border-radius: 6px; padding: 10px 15px; margin: 12px 0; }
+    details.lvl1 { background-color: #1b1b26; border-left: 4px solid #00d4ff; border-radius: 6px; padding: 10px 15px; margin: 12px 0; overflow: visible; }
     details.lvl1 > summary { font-size: 20px; font-weight: bold; color: #00d4ff; cursor: pointer; outline: none; }
-    details.lvl2 { background-color: #232332; border-left: 3px solid #ffcc00; border-radius: 6px; padding: 8px 14px; margin: 10px 0 10px 15px; }
+    details.lvl2 { background-color: #232332; border-left: 3px solid #ffcc00; border-radius: 6px; padding: 8px 14px; margin: 10px 0 10px 15px; overflow: visible; }
     details.lvl2 > summary { font-size: 17px; font-weight: bold; color: #ffcc00; cursor: pointer; outline: none; }
-    details.lvl3 { background-color: #2b2b3c; border-left: 3px solid #ff66b2; border-radius: 6px; padding: 6px 12px; margin: 8px 0 8px 25px; }
+    details.lvl3 { background-color: #2b2b3c; border-left: 3px solid #ff66b2; border-radius: 6px; padding: 6px 12px; margin: 8px 0 8px 25px; overflow: visible; }
     details.lvl3 > summary { font-size: 15px; font-weight: bold; color: #ff66b2; cursor: pointer; outline: none; }
-    .script-body { padding-top: 8px; color: #e0e0e0; line-height: 1.6; white-space: pre-wrap; }
+    .script-body { padding-top: 8px; color: #e0e0e0; line-height: 1.75; overflow: visible; }
+
+    /* =========================================================
+       ИНТЕРАКТИВНЫЕ УПОМИНАНИЯ ПЕРСОНАЖЕЙ ПРЯМО В ТЕКСТЕ
+       ========================================================= */
+    .char-mention {
+        position: relative;
+        display: inline-block;
+        color: #00d4ff;
+        background-color: rgba(0, 212, 255, 0.14);
+        border-bottom: 1px dashed #00d4ff;
+        border-radius: 4px;
+        padding: 0px 6px;
+        margin: 0 1px;
+        font-weight: 600;
+        cursor: pointer;
+        outline: none;
+        transition: background-color 0.2s ease;
+    }
+    .char-mention:hover, .char-mention:focus, .char-mention:active {
+        background-color: rgba(0, 212, 255, 0.32);
+        color: #ffffff;
+        z-index: 9999;
+    }
+    .char-inline-popup {
+        visibility: hidden;
+        opacity: 0;
+        position: absolute;
+        left: 0;
+        top: calc(100% + 6px);
+        width: 265px;
+        background: rgba(22, 22, 34, 0.98);
+        border: 1px solid #00d4ff;
+        border-radius: 12px;
+        padding: 12px;
+        color: #ffffff;
+        font-family: 'Segoe UI', Tahoma, sans-serif;
+        font-weight: normal;
+        box-shadow: 0 10px 28px rgba(0,0,0,0.9), 0 0 14px rgba(0, 212, 255, 0.3);
+        z-index: 99999;
+        pointer-events: none;
+        transition: opacity 0.18s ease, visibility 0.18s ease;
+        text-align: left;
+        line-height: 1.35;
+    }
+    .char-mention:hover .char-inline-popup,
+    .char-mention:focus .char-inline-popup,
+    .char-mention:active .char-inline-popup {
+        visibility: visible;
+        opacity: 1;
+    }
+    .cip-header { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: 4px; }
+    .cip-faction { color: #ffcc00; font-weight: bold; text-transform: uppercase; }
+    .cip-type { background: #2b2b3d; color: #00d4ff; padding: 1px 6px; border-radius: 4px; font-weight: bold; }
+    .cip-title { display: block; font-family: 'Courier New', monospace; font-size: 17px; font-weight: bold; color: #ffffff; margin-bottom: 6px; border-bottom: 1px solid #33334d; padding-bottom: 4px; }
+    .cip-img-wrap { display: block; width: 100%; max-height: 175px; overflow: hidden; border-radius: 8px; margin-bottom: 7px; background: #12121a; }
+    .cip-img-wrap img { width: 100%; height: 175px; object-fit: cover; display: block; }
+    .cip-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; background: #232334; padding: 6px 8px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 12px; border-left: 3px solid #00d4ff; margin-bottom: 6px; }
+    .cip-stat-let { color: #00d4ff; font-weight: bold; margin-right: 4px; }
+    .cip-align { display: block; text-align: center; padding: 3px; border-radius: 5px; font-weight: bold; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+    .cip-hero { background: rgba(77, 166, 255, 0.2); color: #4da6ff; border: 1px solid #4da6ff; }
+    .cip-villain { background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
+    .cip-neutral { background: rgba(255, 204, 0, 0.2); color: #ffcc00; border: 1px solid #ffcc00; }
+    .cip-desc { display: block; font-size: 12px; color: #cccccc; margin-bottom: 5px; }
+    .cip-bonuses { display: block; font-size: 11px; color: #ff99cc; margin-bottom: 5px; }
+    .cip-lore { display: block; font-size: 11px; color: #aaaaaa; border-top: 1px solid #2e2e42; padding-top: 4px; margin-top: 4px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -206,6 +272,250 @@ def get_cards_for_character(char_name, cards_df):
     )
     return cards_df[mask]
 
+# --- СБОРКА ПОЛНОГО СЛОВАРЯ ДАННЫХ ВСЕХ ПЕРСОНАЖЕЙ (ДЛЯ ГРАФА И ТЕКСТОВ) ---
+def build_universe_character_lookup(nodes_df, edges_df, cards_df):
+    lookup = {}
+    color_options = [c for c in nodes_df.columns if c not in ["Имя / Название персонажа", "Заметки"]]
+
+    # 1. Сначала собираем всех персонажей из Nodes
+    for _, row in nodes_df.iterrows():
+        name = str(row.get('Имя / Название персонажа', '')).strip()
+        if not name or name == "Не указано":
+            continue
+        lore_lines = [f"{c}: {row.get(c, 'Не указано')}" for c in color_options if str(row.get(c, 'Не указано')) != 'Не указано']
+        if str(row.get('Заметки', '')).strip() not in ['', 'Не указано']:
+            lore_lines.append(f"Лор: {row.get('Заметки')}")
+
+        rels = get_character_relations(name, edges_df)
+        rel_strings = [f"{r['type']} с {r['partner']} ({'⭐' * r['weight']})" for r in rels]
+
+        char_cards = get_cards_for_character(name, cards_df)
+        main_card = None
+        bonus_names = []
+        if not char_cards.empty:
+            pers_cards = char_cards[char_cards['Card_Type'] == 'Персонаж']
+            main_card = pers_cards.iloc[0] if not pers_cards.empty else char_cards.iloc[0]
+            bonus_cards = char_cards[char_cards['Card_Type'] == 'Бонус']
+            bonus_names = bonus_cards['Name'].tolist()
+
+        if main_card is not None:
+            lookup[name] = {
+                "has_card": True,
+                "card_name": str(main_card.get('Name', name)),
+                "card_type": str(main_card.get('Card_Type', 'Персонаж')),
+                "alignment": str(main_card.get('Alignment', 'Нейтралитет')),
+                "faction": str(main_card.get('Faction', '')),
+                "str": int(main_card.get('Strength', 0)),
+                "agi": int(main_card.get('Agility', 0)),
+                "mas": int(main_card.get('Mastery', 0)),
+                "wit": int(main_card.get('Wit', 0)),
+                "desc": str(main_card.get('Description', '')),
+                "image": str(main_card.get('Image_Data', '')).strip(),
+                "bonuses": bonus_names,
+                "lore": lore_lines,
+                "relations": rel_strings,
+                "raw_rels": rels
+            }
+        else:
+            lookup[name] = {
+                "has_card": False,
+                "card_name": name,
+                "lore": lore_lines,
+                "relations": rel_strings,
+                "raw_rels": rels
+            }
+
+    # 2. Добавляем карточки персонажей, которых еще нет в Nodes
+    for _, crd in cards_df.iterrows():
+        c_name = str(crd.get('Name', '')).strip()
+        if c_name and c_name not in lookup and str(crd.get('Card_Type', '')) == 'Персонаж':
+            lookup[c_name] = {
+                "has_card": True,
+                "card_name": c_name,
+                "card_type": "Персонаж",
+                "alignment": str(crd.get('Alignment', 'Нейтралитет')),
+                "faction": str(crd.get('Faction', '')),
+                "str": int(crd.get('Strength', 0)),
+                "agi": int(crd.get('Agility', 0)),
+                "mas": int(crd.get('Mastery', 0)),
+                "wit": int(crd.get('Wit', 0)),
+                "desc": str(crd.get('Description', '')),
+                "image": str(crd.get('Image_Data', '')).strip(),
+                "bonuses": [],
+                "lore": [],
+                "relations": [],
+                "raw_rels": []
+            }
+    return lookup
+
+# --- УМНЫЙ ПОИСК И ПОДСВЕТКА ИМЁН ПЕРСОНАЖЕЙ В ТЕКСТЕ (С УЧЁТОМ ПАДЕЖЕЙ) ---
+def get_russian_stem_pattern(w, is_multiword=False):
+    if not re.match(r'^[А-Яа-яЁё]+$', w):
+        return re.escape(w)
+    w_low = w.lower()
+    if len(w) >= 5 and w_low.endswith(('ая', 'яя', 'ый', 'ий', 'ой', 'ое', 'ее')):
+        return re.escape(w[:-2]) + r'[А-Яа-яЁё]{0,4}'
+    if len(w) >= 4 or (is_multiword and len(w) >= 3):
+        stem = w[:-1] if w_low[-1] in 'аяеёиоуыэюьй' else w
+        return re.escape(stem) + r'[А-Яа-яЁё]{0,3}'
+    return re.escape(w)
+
+def build_character_matchers(char_names):
+    alias_to_canon = {}
+    for name in char_names:
+        clean = str(name).strip()
+        if not clean or clean == "Не указано":
+            continue
+        alias_to_canon[clean] = clean
+        # Если в имени есть скобки, например: "Охотница (Екатерина Лавровская)"
+        m = re.match(r'^(.+?)\s*\((.+?)\)$', clean)
+        if m:
+            part1, part2 = m.group(1).strip(), m.group(2).strip()
+            if len(part1) >= 3:
+                alias_to_canon[part1] = clean
+            if len(part2) >= 3:
+                alias_to_canon[part2] = clean
+
+    sorted_aliases = sorted(alias_to_canon.keys(), key=len, reverse=True)
+    patterns = []
+    for alias in sorted_aliases:
+        words = alias.split()
+        is_multi = len(words) > 1
+        word_pats = [get_russian_stem_pattern(w, is_multi) for w in words]
+        full_pat = r'(?<![А-Яа-яЁёA-Za-z0-9_])(' + r'\s+'.join(word_pats) + r')(?![А-Яа-яЁёA-Za-z0-9_])'
+        patterns.append((re.compile(full_pat, re.IGNORECASE), alias_to_canon[alias]))
+    return patterns
+
+def build_inline_popup_span(char_name, info):
+    """Создает однострочный HTML-блок карточки внутри <span> для всплытия над именем в тексте."""
+    parts = []
+    if info.get("has_card"):
+        align = info.get("alignment", "Нейтралитет")
+        align_cls = "cip-hero" if align == "Герой" else ("cip-villain" if align == "Злодей" else "cip-neutral")
+        parts.append(
+            f'<span class="cip-header">'
+            f'<span class="cip-faction">{html.escape(str(info.get("faction", "")))}</span>'
+            f'<span class="cip-type">{html.escape(str(info.get("card_type", "Персонаж")))}</span>'
+            f'</span>'
+        )
+        parts.append(f'<span class="cip-title">{html.escape(str(info.get("card_name", char_name)))}</span>')
+        img_src = info.get("image", "")
+        if img_src:
+            parts.append(f'<span class="cip-img-wrap"><img src="{img_src}" alt="card"/></span>')
+        parts.append(
+            f'<span class="cip-stats">'
+            f'<span><span class="cip-stat-let">С</span>{info.get("str", 0)}</span>'
+            f'<span><span class="cip-stat-let">Л</span>{info.get("agi", 0)}</span>'
+            f'<span><span class="cip-stat-let">М</span>{info.get("mas", 0)}</span>'
+            f'<span><span class="cip-stat-let">С</span>{info.get("wit", 0)}</span>'
+            f'</span>'
+        )
+        parts.append(f'<span class="cip-align {align_cls}">{html.escape(str(align))}</span>')
+        if info.get("desc"):
+            parts.append(f'<span class="cip-desc">{html.escape(str(info.get("desc")))}</span>')
+        if info.get("bonuses"):
+            parts.append(f'<span class="cip-bonuses">🎁 Бонусы: {html.escape(", ".join(info["bonuses"]))}</span>')
+    else:
+        parts.append(f'<span class="cip-title">👤 {html.escape(char_name)}</span>')
+
+    if info.get("lore"):
+        lore_html = "<br>".join(f"▪ {html.escape(str(x))}" for x in info["lore"])
+        parts.append(f'<span class="cip-lore">{lore_html}</span>')
+
+    if info.get("relations"):
+        rel_html = "<br>".join(f"🔗 {html.escape(str(r))}" for r in info["relations"][:4])
+        parts.append(f'<span class="cip-lore">{rel_html}</span>')
+
+    return "".join(parts)
+
+def highlight_characters_in_escaped_line(escaped_line, matchers, popup_span_map, found_chars_list):
+    replacements = []
+
+    def make_replacer(canon_name):
+        def _repl(match_obj):
+            surface = match_obj.group(0)
+            idx = len(replacements)
+            replacements.append((surface, canon_name))
+            if canon_name not in found_chars_list:
+                found_chars_list.append(canon_name)
+            return f"\x00CH{idx}\x00"
+        return _repl
+
+    work_line = escaped_line
+    for pat, canon in matchers:
+        if canon in popup_span_map:
+            work_line = pat.sub(make_replacer(canon), work_line)
+
+    for idx, (surface, canon) in enumerate(replacements):
+        popup_inner = popup_span_map[canon]
+        badge_html = (
+            f'<span class="char-mention" tabindex="0">'
+            f'👤 {surface}'
+            f'<span class="char-inline-popup">{popup_inner}</span>'
+            f'</span>'
+        )
+        work_line = work_line.replace(f"\x00CH{idx}\x00", badge_html)
+
+    return work_line
+
+def render_character_popover_bar(found_chars, char_lookup, key_prefix="Mention"):
+    """Рисует панель с кнопками-поповерами для всех персонажей, найденных в тексте."""
+    if not found_chars:
+        return
+    st.caption("👥 **Упомянутые в тексте персонажи** *(нажмите на кнопку для открытия полного досье и карточки)*:")
+    cols = st.columns(min(len(found_chars), 4))
+    for i, ch_name in enumerate(found_chars):
+        info = char_lookup.get(ch_name, {})
+        with cols[i % 4]:
+            with st.popover(f"👤 {ch_name}", use_container_width=True):
+                if info.get("has_card"):
+                    al_str = info.get("alignment", "Нейтралитет")
+                    al_cls = "align-hero" if al_str == "Герой" else ("align-villain" if al_str == "Злодей" else "align-neutral")
+                    st.markdown(f"""
+                    <div class="game-card">
+                        <div class="game-card-header">
+                            <span style="color:#ffcc00; font-size:12px;">{html.escape(str(info.get('faction', '')))}</span>
+                            <span class="game-card-type">{html.escape(str(info.get('card_type', 'Персонаж')))}</span>
+                        </div>
+                        <div class="game-card-title">{html.escape(str(info.get('card_name', ch_name)))}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if info.get("image"):
+                        st.image(info["image"], use_container_width=True)
+                    st.markdown(f"""
+                    <div class="stats-grid">
+                        <div class="stat-item"><span class="stat-letter">С</span>{info.get('str', 0)}</div>
+                        <div class="stat-item"><span class="stat-letter">Л</span>{info.get('agi', 0)}</div>
+                        <div class="stat-item"><span class="stat-letter">М</span>{info.get('mas', 0)}</div>
+                        <div class="stat-item"><span class="stat-letter">С</span>{info.get('wit', 0)}</div>
+                    </div>
+                    <div class="alignment-badge {al_cls}">{html.escape(al_str)}</div>
+                    """, unsafe_allow_html=True)
+                    if info.get("desc"):
+                        st.caption(info["desc"])
+                    if info.get("bonuses"):
+                        st.markdown(f"🎁 **Бонусы:** {', '.join(info['bonuses'])}")
+                else:
+                    st.markdown(f"### 👤 {ch_name}")
+
+                if info.get("lore"):
+                    st.write("---")
+                    for l_item in info["lore"]:
+                        st.markdown(f"▪ {l_item}")
+
+                if info.get("raw_rels"):
+                    st.write("---")
+                    st.markdown("**🔗 Связи на графе:**")
+                    for r in info["raw_rels"]:
+                        t_low = r['type'].lower()
+                        css_c = "rel-enemy" if t_low in ['вражда', 'конфликт'] else ("rel-ally" if t_low in ['союз', 'родство', 'подчинение'] else "rel-neutral")
+                        st.markdown(f"""
+                        <div class="rel-pill {css_c}">
+                            <span><b>{html.escape(r['partner'])}</b> ({html.escape(r['type'])})</span>
+                            <span>{'⭐' * r['weight']}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+
 # --- ЧТЕНИЕ ФАЙЛОВ С КОМПЬЮТЕРА (.DOCX, .TXT, .MD) ---
 def read_uploaded_document(uploaded_file):
     filename = uploaded_file.name
@@ -247,11 +557,12 @@ def compress_uploaded_image(uploaded_file):
     b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
     return f"data:image/jpeg;base64,{b64_str}"
 
-# --- ПАРСИНГ СКРЫТЫХ ЗАГОЛОВКОВ И ПОДЗАГОЛОВКОВ ---
-def render_script_with_spoilers(raw_text):
+# --- ПАРСИНГ СКРЫТЫХ ЗАГОЛОВКОВ И АВТО-ПОДСВЕТКА ИМЁН ПЕРСОНАЖЕЙ ---
+def render_text_with_spoilers_and_characters(raw_text, matchers, popup_span_map, enable_spoilers=True):
     lines = raw_text.split('\n')
     html_out = []
     open_levels = []
+    found_chars = []
 
     def close_until(target_level):
         while open_levels and open_levels[-1] >= target_level:
@@ -260,26 +571,31 @@ def render_script_with_spoilers(raw_text):
 
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith('### '):
+        if enable_spoilers and stripped.startswith('### '):
             close_until(3)
-            title = html.escape(stripped[4:].strip())
-            html_out.append(f'<details class="lvl3"><summary>🔹 {title}</summary><div class="script-body">')
+            title_escaped = html.escape(stripped[4:].strip())
+            title_hl = highlight_characters_in_escaped_line(title_escaped, matchers, popup_span_map, found_chars)
+            html_out.append(f'<details class="lvl3"><summary>🔹 {title_hl}</summary><div class="script-body">')
             open_levels.append(3)
-        elif stripped.startswith('## '):
+        elif enable_spoilers and stripped.startswith('## '):
             close_until(2)
-            title = html.escape(stripped[3:].strip())
-            html_out.append(f'<details class="lvl2"><summary>📂 {title}</summary><div class="script-body">')
+            title_escaped = html.escape(stripped[3:].strip())
+            title_hl = highlight_characters_in_escaped_line(title_escaped, matchers, popup_span_map, found_chars)
+            html_out.append(f'<details class="lvl2"><summary>📂 {title_hl}</summary><div class="script-body">')
             open_levels.append(2)
-        elif stripped.startswith('# '):
+        elif enable_spoilers and stripped.startswith('# '):
             close_until(1)
-            title = html.escape(stripped[2:].strip())
-            html_out.append(f'<details class="lvl1"><summary>📁 {title}</summary><div class="script-body">')
+            title_escaped = html.escape(stripped[2:].strip())
+            title_hl = highlight_characters_in_escaped_line(title_escaped, matchers, popup_span_map, found_chars)
+            html_out.append(f'<details class="lvl1"><summary>📁 {title_hl}</summary><div class="script-body">')
             open_levels.append(1)
         else:
-            html_out.append(html.escape(line) + "<br>")
+            escaped_line = html.escape(line)
+            hl_line = highlight_characters_in_escaped_line(escaped_line, matchers, popup_span_map, found_chars)
+            html_out.append(hl_line + "<br>")
 
     close_until(1)
-    return "".join(html_out)
+    return "".join(html_out), found_chars
 
 # --- ВСТРАИВАНИЕ ИНТЕРАКТИВНОЙ КАРТОЧКИ ПРИ НАВЕДЕНИИ В HTML ГРАФА ---
 def inject_card_hover_into_graph(raw_html, node_popup_dict):
@@ -301,74 +617,21 @@ def inject_card_hover_into_graph(raw_html, node_popup_dict):
             pointer-events: none;
             backdrop-filter: blur(6px);
         }}
-        .gcp-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 11px;
-            margin-bottom: 4px;
-        }}
+        .gcp-header {{ display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: 4px; }}
         .gcp-faction {{ color: #ffcc00; font-weight: bold; text-transform: uppercase; }}
         .gcp-type {{ background: #2b2b3d; color: #00d4ff; padding: 2px 6px; border-radius: 4px; font-weight: bold; }}
-        .gcp-title {{
-            font-family: 'Courier New', monospace;
-            font-size: 18px;
-            font-weight: bold;
-            color: #ffffff;
-            margin-bottom: 6px;
-            border-bottom: 1px solid #33334d;
-            padding-bottom: 4px;
-        }}
-        .gcp-img-wrap {{
-            width: 100%;
-            max-height: 195px;
-            overflow: hidden;
-            border-radius: 8px;
-            margin-bottom: 8px;
-            text-align: center;
-            background: #12121a;
-        }}
-        .gcp-img-wrap img {{
-            width: 100%;
-            height: 195px;
-            object-fit: cover;
-            display: block;
-        }}
-        .gcp-stats {{
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 4px 8px;
-            background: #232334;
-            padding: 6px 9px;
-            border-radius: 6px;
-            font-family: 'Courier New', monospace;
-            font-size: 13px;
-            border-left: 3px solid #00d4ff;
-            margin-bottom: 6px;
-        }}
+        .gcp-title {{ font-family: 'Courier New', monospace; font-size: 18px; font-weight: bold; color: #ffffff; margin-bottom: 6px; border-bottom: 1px solid #33334d; padding-bottom: 4px; }}
+        .gcp-img-wrap {{ width: 100%; max-height: 195px; overflow: hidden; border-radius: 8px; margin-bottom: 8px; text-align: center; background: #12121a; }}
+        .gcp-img-wrap img {{ width: 100%; height: 195px; object-fit: cover; display: block; }}
+        .gcp-stats {{ display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; background: #232334; padding: 6px 9px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 13px; border-left: 3px solid #00d4ff; margin-bottom: 6px; }}
         .gcp-stat-let {{ color: #00d4ff; font-weight: bold; margin-right: 4px; }}
-        .gcp-align {{
-            text-align: center;
-            padding: 4px;
-            border-radius: 5px;
-            font-weight: bold;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 6px;
-        }}
+        .gcp-align {{ text-align: center; padding: 4px; border-radius: 5px; font-weight: bold; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }}
         .gcp-hero {{ background: rgba(77, 166, 255, 0.2); color: #4da6ff; border: 1px solid #4da6ff; }}
         .gcp-villain {{ background: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }}
         .gcp-neutral {{ background: rgba(255, 204, 0, 0.2); color: #ffcc00; border: 1px solid #ffcc00; }}
         .gcp-desc {{ font-size: 12px; color: #cccccc; margin-bottom: 6px; line-height: 1.35; }}
         .gcp-bonuses {{ font-size: 11px; color: #ff99cc; margin-bottom: 6px; }}
-        .gcp-lore {{
-            font-size: 11px;
-            color: #aaaaaa;
-            border-top: 1px solid #2e2e42;
-            padding-top: 5px;
-            line-height: 1.4;
-        }}
+        .gcp-lore {{ font-size: 11px; color: #aaaaaa; border-top: 1px solid #2e2e42; padding-top: 5px; line-height: 1.4; }}
     </style>
 
     <div id="graph-card-popup"></div>
@@ -510,6 +773,15 @@ if 'config' not in st.session_state:
 if 'colors' not in st.session_state['config']: st.session_state['config']['colors'] = {}
 if 'options' not in st.session_state['config']: st.session_state['config']['options'] = {}
 
+# --- ЕДИНЫЙ ИНДЕКС ПЕРСОНАЖЕЙ ДЛЯ ПОДСКАЗОК ВО ВСЕХ МОДУЛЯХ ---
+CHAR_LOOKUP = build_universe_character_lookup(
+    st.session_state['nodes'],
+    st.session_state['edges'],
+    st.session_state['cards']
+)
+CHAR_MATCHERS = build_character_matchers(list(CHAR_LOOKUP.keys()))
+CHAR_POPUP_SPANS = {name: build_inline_popup_span(name, info) for name, info in CHAR_LOOKUP.items()}
+
 # --- БОКОВОЕ МЕНЮ НАВИГАЦИИ ---
 st.sidebar.title("🌆 БИГ СИТИ")
 app_mode = st.sidebar.radio(
@@ -530,6 +802,25 @@ if st.sidebar.button("🔄 Синхронизировать с облаком", 
     st.session_state['archives'], st.session_state['cards'], st.session_state['scripts'] = a, c, s
     st.session_state['config'] = load_config()
     st.rerun()
+
+# Глобальная быстрая справка по любому персонажу прямо в боковой панели
+if CHAR_LOOKUP:
+    with st.sidebar.expander("🔍 Быстрая справка по герою", expanded=False):
+        quick_hero = st.selectbox("Выберите персонажа:", sorted(list(CHAR_LOOKUP.keys())), key="sb_quick_hero")
+        if quick_hero:
+            q_info = CHAR_LOOKUP[quick_hero]
+            if q_info.get("has_card"):
+                st.markdown(f"**{q_info['card_name']}** ({q_info['alignment']} • {q_info['faction']})")
+                if q_info.get("image"):
+                    st.image(q_info["image"], use_container_width=True)
+                st.code(f"С: {q_info['str']} | Л: {q_info['agi']}\nМ: {q_info['mas']} | С: {q_info['wit']}")
+                if q_info.get("desc"):
+                    st.caption(q_info["desc"])
+            if q_info.get("lore"):
+                for l_line in q_info["lore"]:
+                    st.caption(f"▪ {l_line}")
+            if q_info.get("relations"):
+                st.caption("🔗 **Связи:** " + "; ".join(q_info["relations"]))
 
 
 # ==============================================================================
@@ -553,8 +844,14 @@ if app_mode == "🌐 Персонажи и Граф":
             with d_col1:
                 st.subheader(f"👤 {sel_hero}")
                 for col_n in st.session_state['nodes'].columns:
-                    if col_n != 'Имя / Название персонажа':
+                    if col_n not in ['Имя / Название персонажа', 'Заметки']:
                         st.markdown(f"**{col_n}:** {hero_row.get(col_n, 'Не указано')}")
+                if str(hero_row.get('Заметки', '')).strip() not in ['', 'Не указано']:
+                    st.markdown("**Заметки / Лор:**")
+                    hl_notes, _ = render_text_with_spoilers_and_characters(
+                        str(hero_row['Заметки']), CHAR_MATCHERS, CHAR_POPUP_SPANS, enable_spoilers=False
+                    )
+                    st.markdown(f"<div class='script-body'>{hl_notes}</div>", unsafe_allow_html=True)
                 
                 st.write("---")
                 st.markdown("#### 🔗 Связи на графе")
@@ -761,7 +1058,6 @@ if app_mode == "🌐 Персонажи и Граф":
 
             unique_color_targets = df_n[color_by].dropna().unique().tolist()
             node_popup_dict = {}
-            all_cards_df = st.session_state['cards']
 
             for _, row in df_n.iterrows():
                 name = str(row['Имя / Название персонажа']).strip()
@@ -776,54 +1072,20 @@ if app_mode == "🌐 Персонажи и Граф":
                         saved_color = "#ffffff"
                         
                 size = 28 if '1' in plan else (18 if '2' in plan else 12)
-                lore_lines = [f"{c}: {row.get(c, 'Не указано')}" for c in color_options if str(row.get(c, 'Не указано')) != 'Не указано']
-                if str(row.get('Заметки', '')).strip() not in ['', 'Не указано']:
-                    lore_lines.append(f"Лор: {row.get('Заметки')}")
+                info = CHAR_LOOKUP.get(name, {"has_card": False, "lore": []})
+                node_popup_dict[name] = info
 
-                # Ищем привязанные к персонажу карточки
-                char_cards = get_cards_for_character(name, all_cards_df)
-                main_card = None
-                bonus_names = []
-                if not char_cards.empty:
-                    pers_cards = char_cards[char_cards['Card_Type'] == 'Персонаж']
-                    main_card = pers_cards.iloc[0] if not pers_cards.empty else char_cards.iloc[0]
-                    bonus_cards = char_cards[char_cards['Card_Type'] == 'Бонус']
-                    bonus_names = bonus_cards['Name'].tolist()
-
-                if main_card is not None:
-                    card_img_str = str(main_card.get('Image_Data', '')).strip()
-                    node_popup_dict[name] = {
-                        "has_card": True,
-                        "card_name": str(main_card.get('Name', name)),
-                        "card_type": str(main_card.get('Card_Type', 'Персонаж')),
-                        "alignment": str(main_card.get('Alignment', 'Нейтралитет')),
-                        "faction": str(main_card.get('Faction', '')),
-                        "str": int(main_card.get('Strength', 0)),
-                        "agi": int(main_card.get('Agility', 0)),
-                        "mas": int(main_card.get('Mastery', 0)),
-                        "wit": int(main_card.get('Wit', 0)),
-                        "desc": str(main_card.get('Description', '')),
-                        "image": card_img_str,
-                        "bonuses": bonus_names,
-                        "lore": lore_lines
-                    }
-                    if show_card_avatars and card_img_str:
-                        net.add_node(
-                            name,
-                            label=name,
-                            size=size + 6,
-                            shape='circularImage',
-                            image=card_img_str,
-                            borderWidth=4,
-                            color={'border': saved_color, 'background': '#1b1b26', 'highlight': {'border': '#00d4ff'}}
-                        )
-                    else:
-                        net.add_node(name, label=name, size=size, color=saved_color)
+                if info.get("has_card") and show_card_avatars and info.get("image"):
+                    net.add_node(
+                        name,
+                        label=name,
+                        size=size + 6,
+                        shape='circularImage',
+                        image=info["image"],
+                        borderWidth=4,
+                        color={'border': saved_color, 'background': '#1b1b26', 'highlight': {'border': '#00d4ff'}}
+                    )
                 else:
-                    node_popup_dict[name] = {
-                        "has_card": False,
-                        "lore": lore_lines
-                    }
                     net.add_node(name, label=name, size=size, color=saved_color)
 
             added_nodes = net.get_nodes()
@@ -1059,7 +1321,10 @@ elif app_mode == "🃏 Галерея Карточек":
                     """, unsafe_allow_html=True)
 
                     if card['Description']:
-                        st.caption(card['Description'])
+                        hl_desc, _ = render_text_with_spoilers_and_characters(
+                            str(card['Description']), CHAR_MATCHERS, CHAR_POPUP_SPANS, enable_spoilers=False
+                        )
+                        st.markdown(f"<div style='font-size:13px; color:#cccccc; margin-bottom:6px;'>{hl_desc}</div>", unsafe_allow_html=True)
 
                     linked_hero = resolve_linked_character(card, valid_graph_chars)
                     if linked_hero:
@@ -1167,7 +1432,7 @@ elif app_mode == "🃏 Галерея Карточек":
 
 
 # ==============================================================================
-# МОДУЛЬ 3: АРХИВЫ И ЛОР (С ЗАГРУЗКОЙ ФАЙЛОВ С ПК)
+# МОДУЛЬ 3: АРХИВЫ И ЛОР (С АВТО-ПОДСВЕТКОЙ ИМЁН И ЗАГРУЗКОЙ ФАЙЛОВ)
 # ==============================================================================
 elif app_mode == "📚 Архивы и Лор":
     st.title("📚 Архивы БИГ СИТИ")
@@ -1205,7 +1470,7 @@ elif app_mode == "📚 Архивы и Лор":
 
             new_title = st.text_input("Название документа:", value=init_title)
             new_cat = st.text_input("Раздел / Том (например: Лор, Правила, Локации):", value="Общий Лор")
-            new_content = st.text_area("Текст документа:", value=init_content, height=400)
+            new_content = st.text_area("Текст документа (все имена персонажей подсвечиваются автоматически):", value=init_content, height=400)
             
             c1, c2 = st.columns(2)
             with c1:
@@ -1228,12 +1493,17 @@ elif app_mode == "📚 Архивы и Лор":
             curr_title = st.session_state['selected_doc']
             doc_row = df_arch[df_arch['Title'] == curr_title].iloc[0]
 
-            mode_read, mode_edit = st.tabs(["📖 Чтение", "✏️ Редактировать / Заменить файлом"])
+            mode_read, mode_edit = st.tabs(["📖 Интерактивное чтение", "✏️ Редактировать / Заменить файлом"])
             with mode_read:
                 st.caption(f"Раздел: **{doc_row['Category']}**")
                 st.markdown(f"## {doc_row['Title']}")
+                
+                rendered_arch_html, arch_found_chars = render_text_with_spoilers_and_characters(
+                    str(doc_row['Content']), CHAR_MATCHERS, CHAR_POPUP_SPANS, enable_spoilers=True
+                )
+                render_character_popover_bar(arch_found_chars, CHAR_LOOKUP, key_prefix="arch")
                 st.write("---")
-                st.markdown(doc_row['Content'])
+                st.markdown(f"<div class='script-body'>{rendered_arch_html}</div>", unsafe_allow_html=True)
 
             with mode_edit:
                 replace_doc = st.file_uploader("📂 Заменить текст из файла (.docx, .txt, .md):", type=["docx", "txt", "md"], key="arch_replace")
@@ -1266,7 +1536,7 @@ elif app_mode == "📚 Архивы и Лор":
 
 
 # ==============================================================================
-# МОДУЛЬ 4: СЦЕНАРИИ И СЮЖЕТ (С ЗАГРУЗКОЙ ФАЙЛОВ И СКРЫТЫМИ ЗАГОЛОВКАМИ)
+# МОДУЛЬ 4: СЦЕНАРИИ И СЮЖЕТ (СО СПОЙЛЕРАМИ И ИНТЕРАКТИВНЫМИ ИМЕНАМИ ГЕРОЕВ)
 # ==============================================================================
 elif app_mode == "🎬 Сценарии и Сюжет":
     st.title("🎬 Сценарии и Сюжетные Линии")
@@ -1287,12 +1557,12 @@ elif app_mode == "🎬 Сценарии и Сюжет":
         else:
             st.info("Сценариев пока нет.")
 
-        with st.expander("💡 Как работают скрытые заголовки?"):
+        with st.expander("💡 Подсказка по разметке"):
             st.markdown("""
             * `# Заголовок` — **главный скрытый блок** (1 уровень).
             * `## Подзаголовок` — **вложенный подзаголовок** (2 уровень).
             * `### Деталь` — **глубокий спойлер** (3 уровень).
-            * При загрузке файла `.docx` стандартные стили Word (*Заголовок 1, 2, 3*) превращаются в `#`, `##`, `###` автоматически!
+            * **Имена любых персонажей** из базы подсвечиваются в тексте автоматически! Наведите на имя курсор (или нажмите на телефоне), чтобы увидеть его карточку.
             """)
 
     with col_s_right:
@@ -1339,14 +1609,19 @@ elif app_mode == "🎬 Сценарии и Сюжет":
             curr_s_title = st.session_state['selected_script']
             s_row = df_scr[df_scr['Title'] == curr_s_title].iloc[0]
 
-            tab_s_read, tab_s_edit = st.tabs(["🎭 Интерактивное чтение (Со спойлерами)", "✏️ Редактировать / Загрузить из файла"])
+            tab_s_read, tab_s_edit = st.tabs(["🎭 Интерактивное чтение (Со спойлерами и карточками)", "✏️ Редактировать / Загрузить из файла"])
 
             with tab_s_read:
                 st.caption(f"Арка: **{s_row['Act']}** | Статус: **{s_row['Status']}**")
                 st.markdown(f"## {s_row['Title']}")
-                st.caption("👆 Нажимайте на цветные плашки ниже, чтобы раскрывать акты, сцены и секреты:")
-                rendered_html = render_script_with_spoilers(str(s_row['Content']))
-                st.markdown(rendered_html, unsafe_allow_html=True)
+                
+                rendered_html, scr_found_chars = render_text_with_spoilers_and_characters(
+                    str(s_row['Content']), CHAR_MATCHERS, CHAR_POPUP_SPANS, enable_spoilers=True
+                )
+                render_character_popover_bar(scr_found_chars, CHAR_LOOKUP, key_prefix="scr")
+                st.write("---")
+                st.caption("👆 Нажимайте на цветные блоки для раскрытия сцен, а на подсвеченные имена героев (`👤 Имя`) — для просмотра их карточки:")
+                st.markdown(f"<div class='script-body'>{rendered_html}</div>", unsafe_allow_html=True)
 
             with tab_s_edit:
                 rep_scr = st.file_uploader("📂 Обновить текст сценария из файла (.docx, .txt, .md):", type=["docx", "txt", "md"], key="scr_replace")
