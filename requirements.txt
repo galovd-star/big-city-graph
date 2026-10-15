@@ -3,3 +3,4 @@ pandas
 pyvis
 st-gsheets-connection
 plotly
+Pillow
