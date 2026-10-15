@@ -4,6 +4,7 @@ import streamlit.components.v1 as components
 from pyvis.network import Network
 from streamlit_gsheets import GSheetsConnection
 import plotly.express as px
+import plotly.graph_objects as go
 import json
 import base64
 from io import BytesIO
@@ -19,7 +20,7 @@ st.set_page_config(layout="wide", page_title="БИГ СИТИ: Экосисте�
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1MyQ3vqstgSAarY9NtsAl1f1tnlbgmi-2iljHMf97zBM/edit?gid=0#gid=0"
 
 if SHEET_URL == "ВСТАВЬТЕ_ССЫЛКУ_СЮДА":
-    st.error("⚠️ Откройте код app.py на GitHub и вставьте настоящую ссылку на вашу Google Таблицу в переменную SHEET_URL (строка 20).")
+    st.error("⚠️ Откройте код app.py на GitHub и вставьте настоящую ссылку на вашу Google Таблицу в переменную SHEET_URL.")
     st.stop()
 
 # --- КАСТОМНЫЙ ДИЗАЙН, СТИЛИ КАРТОЧЕК И ВСПЛЫВАЮЩИХ ИМЁН В ТЕКСТЕ ---
@@ -76,7 +77,7 @@ st.markdown("""
     .align-villain { background-color: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
     .align-neutral { background-color: rgba(255, 204, 0, 0.2); color: #ffcc00; border: 1px solid #ffcc00; }
 
-    /* Плашки связей */
+    /* Плашки связей и баланса */
     .rel-pill {
         padding: 5px 10px;
         border-radius: 6px;
@@ -84,11 +85,31 @@ st.markdown("""
         font-size: 13px;
         display: flex;
         justify-content: space-between;
+        align-items: center;
     }
     .rel-ally { background-color: rgba(77, 166, 255, 0.15); border-left: 3px solid #4da6ff; color: #d9ecff; }
     .rel-enemy { background-color: rgba(255, 77, 77, 0.15); border-left: 3px solid #ff4d4d; color: #ffd9d9; }
     .rel-neutral { background-color: rgba(160, 160, 160, 0.15); border-left: 3px solid #999999; color: #e0e0e0; }
     
+    .balance-box {
+        background-color: #181824;
+        border: 1px solid #2e2e48;
+        border-radius: 10px;
+        padding: 12px;
+        margin-top: 8px;
+        margin-bottom: 12px;
+    }
+    .neighbor-card {
+        background-color: #222233;
+        border-radius: 6px;
+        padding: 6px 10px;
+        margin-bottom: 4px;
+        font-size: 12px;
+        border-left: 3px solid #ffcc00;
+        display: flex;
+        justify-content: space-between;
+    }
+
     /* Стили для скрытых заголовков и подзаголовков в Сценариях */
     details.lvl1 { background-color: #1b1b26; border-left: 4px solid #00d4ff; border-radius: 6px; padding: 10px 15px; margin: 12px 0; overflow: visible; }
     details.lvl1 > summary { font-size: 20px; font-weight: bold; color: #00d4ff; cursor: pointer; outline: none; }
@@ -166,6 +187,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 PALETTE = ["#ff4d4d", "#4da6ff", "#9933ff", "#33cc33", "#ffcc00", "#ff66b2", "#339999", "#ff9933", "#996633", "#6699ff"]
+ALIGN_COLORS = {"Герой": "#4da6ff", "Злодей": "#ff4d4d", "Нейтралитет": "#ffcc00"}
 
 # --- ПОДКЛЮЧЕНИЕ К GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -174,6 +196,18 @@ CARD_COLS = [
     'Name', 'Card_Type', 'Alignment', 'Faction',
     'Strength', 'Agility', 'Mastery', 'Wit',
     'Description', 'Image_Data', 'Linked_Character'
+]
+LOC_COLS = [
+    'Name', 'Region', 'Loc_Type', 'Controlling_Faction',
+    'X', 'Y', 'Description', 'Map_Image', 'Linked_Characters', 'Linked_Scripts'
+]
+TIME_COLS = [
+    'Order_Index', 'Date_Label', 'Era', 'Title',
+    'Description', 'Participants', 'Location', 'Linked_Script'
+]
+FAC_COLS = [
+    'Name', 'Motto', 'Leader', 'Ideology', 'Base_Location',
+    'Influence', 'Color', 'Description', 'Logo_Data', 'Allies', 'Enemies'
 ]
 
 def safe_read_sheet(worksheet_name, default_cols):
@@ -184,13 +218,22 @@ def safe_read_sheet(worksheet_name, default_cols):
             return pd.DataFrame(columns=default_cols)
         for col in default_cols:
             if col not in df.columns:
-                if col in ['Strength', 'Agility', 'Mastery', 'Wit']:
+                if col in ['Strength', 'Agility', 'Mastery', 'Wit', 'Order_Index']:
                     df[col] = 0
+                elif col in ['X', 'Y', 'Influence']:
+                    df[col] = 50
                 elif col == 'Card_Type':
                     df[col] = 'Персонаж'
                 elif col == 'Alignment':
                     df[col] = 'Нейтралитет'
-                elif col in ["Content", "Image_Data", "Заметки", "Description", "Linked_Character"]:
+                elif col == 'Color':
+                    df[col] = '#00d4ff'
+                elif col in [
+                    "Content", "Image_Data", "Заметки", "Description", "Linked_Character",
+                    "Map_Image", "Linked_Characters", "Linked_Scripts", "Participants",
+                    "Location", "Linked_Script", "Motto", "Leader", "Ideology",
+                    "Base_Location", "Logo_Data", "Allies", "Enemies"
+                ]:
                     df[col] = ""
                 else:
                     df[col] = "Не указано"
@@ -207,7 +250,18 @@ def load_all_data():
     for stat_col in ['Strength', 'Agility', 'Mastery', 'Wit']:
         cards[stat_col] = pd.to_numeric(cards[stat_col], errors='coerce').fillna(0).astype(int)
     scripts = safe_read_sheet("Scripts", ['Title', 'Act', 'Status', 'Content'])
-    return nodes, edges, archives, cards, scripts
+    
+    locations = safe_read_sheet("Locations", LOC_COLS)
+    for c_xy in ['X', 'Y']:
+        locations[c_xy] = pd.to_numeric(locations[c_xy], errors='coerce').fillna(50.0)
+        
+    timeline = safe_read_sheet("Timeline", TIME_COLS)
+    timeline['Order_Index'] = pd.to_numeric(timeline['Order_Index'], errors='coerce').fillna(1).astype(int)
+    
+    factions = safe_read_sheet("Factions", FAC_COLS)
+    factions['Influence'] = pd.to_numeric(factions['Influence'], errors='coerce').fillna(50).astype(int)
+    
+    return nodes, edges, archives, cards, scripts, locations, timeline, factions
 
 @st.cache_data(ttl=5)
 def load_config():
@@ -219,14 +273,14 @@ def load_config():
                 return json.loads(val)
     except Exception:
         pass
-    return {"colors": {}, "options": {}}
+    return {"colors": {}, "options": {}, "region_maps": {}}
 
 def save_sheet(worksheet_name, df):
     try:
         conn.update(spreadsheet=SHEET_URL, worksheet=worksheet_name, data=df)
         st.cache_data.clear()
     except Exception as e:
-        st.error(f"⚠️ Ошибка сохранения в лист '{worksheet_name}'. Проверьте наличие листа в таблице! Детали: {e}")
+        st.error(f"⚠️ Ошибка сохранения в лист '{worksheet_name}'. Убедитесь, что лист '{worksheet_name}' создан в вашей Google Таблице! Детали: {e}")
 
 def save_config_to_cloud(config_dict):
     df = pd.DataFrame({"Settings": [json.dumps(config_dict, ensure_ascii=False)]})
@@ -277,7 +331,6 @@ def build_universe_character_lookup(nodes_df, edges_df, cards_df):
     lookup = {}
     color_options = [c for c in nodes_df.columns if c not in ["Имя / Название персонажа", "Заметки"]]
 
-    # 1. Сначала собираем всех персонажей из Nodes
     for _, row in nodes_df.iterrows():
         name = str(row.get('Имя / Название персонажа', '')).strip()
         if not name or name == "Не указано":
@@ -325,7 +378,6 @@ def build_universe_character_lookup(nodes_df, edges_df, cards_df):
                 "raw_rels": rels
             }
 
-    # 2. Добавляем карточки персонажей, которых еще нет в Nodes
     for _, crd in cards_df.iterrows():
         c_name = str(crd.get('Name', '')).strip()
         if c_name and c_name not in lookup and str(crd.get('Card_Type', '')) == 'Персонаж':
@@ -367,7 +419,6 @@ def build_character_matchers(char_names):
         if not clean or clean == "Не указано":
             continue
         alias_to_canon[clean] = clean
-        # Если в имени есть скобки, например: "Охотница (Екатерина Лавровская)"
         m = re.match(r'^(.+?)\s*\((.+?)\)$', clean)
         if m:
             part1, part2 = m.group(1).strip(), m.group(2).strip()
@@ -386,8 +437,65 @@ def build_character_matchers(char_names):
         patterns.append((re.compile(full_pat, re.IGNORECASE), alias_to_canon[alias]))
     return patterns
 
+def find_character_mentions_across_ecosystem(char_name, matchers, archives_df, scripts_df, locations_df, timeline_df):
+    """Ищет все упоминания выбранного героя во всех модулях экосистемы."""
+    char_pats = [pat for pat, canon in matchers if canon == char_name]
+    results = {"archives": [], "scripts": [], "locations": [], "timeline": []}
+    if not char_pats:
+        return results
+
+    def has_match(text):
+        t = str(text)
+        return any(p.search(t) for p in char_pats)
+
+    def extract_snippet(text):
+        t = str(text)
+        for p in char_pats:
+            m = p.search(t)
+            if m:
+                start = max(0, m.start() - 55)
+                end = min(len(t), m.end() + 55)
+                return ("..." if start > 0 else "") + t[start:end].replace("\n", " ") + ("..." if end < len(t) else "")
+        return ""
+
+    for _, r in archives_df.iterrows():
+        if has_match(r.get('Title', '')) or has_match(r.get('Content', '')):
+            results["archives"].append({
+                "title": r.get('Title', 'Без названия'),
+                "cat": r.get('Category', 'Общее'),
+                "snippet": extract_snippet(r.get('Content', ''))
+            })
+
+    for _, r in scripts_df.iterrows():
+        if has_match(r.get('Title', '')) or has_match(r.get('Content', '')):
+            results["scripts"].append({
+                "title": r.get('Title', 'Без названия'),
+                "act": r.get('Act', ''),
+                "status": r.get('Status', ''),
+                "snippet": extract_snippet(r.get('Content', ''))
+            })
+
+    for _, r in locations_df.iterrows():
+        linked_list = [x.strip() for x in str(r.get('Linked_Characters', '')).split(',') if x.strip()]
+        if char_name in linked_list or has_match(r.get('Description', '')) or has_match(r.get('Name', '')):
+            results["locations"].append({
+                "name": r.get('Name', ''),
+                "region": r.get('Region', ''),
+                "type": r.get('Loc_Type', '')
+            })
+
+    for _, r in timeline_df.iterrows():
+        part_list = [x.strip() for x in str(r.get('Participants', '')).split(',') if x.strip()]
+        if char_name in part_list or has_match(r.get('Description', '')) or has_match(r.get('Title', '')):
+            results["timeline"].append({
+                "date": r.get('Date_Label', ''),
+                "era": r.get('Era', ''),
+                "title": r.get('Title', '')
+            })
+
+    return results
+
 def build_inline_popup_span(char_name, info):
-    """Создает однострочный HTML-блок карточки внутри <span> для всплытия над именем в тексте."""
     parts = []
     if info.get("has_card"):
         align = info.get("alignment", "Нейтралитет")
@@ -459,7 +567,6 @@ def highlight_characters_in_escaped_line(escaped_line, matchers, popup_span_map,
     return work_line
 
 def render_character_popover_bar(found_chars, char_lookup, key_prefix="Mention"):
-    """Рисует панель с кнопками-поповерами для всех персонажей, найденных в тексте."""
     if not found_chars:
         return
     st.caption("👥 **Упомянутые в тексте персонажи** *(нажмите на кнопку для открытия полного досье и карточки)*:")
@@ -516,7 +623,7 @@ def render_character_popover_bar(found_chars, char_lookup, key_prefix="Mention")
                         </div>
                         """, unsafe_allow_html=True)
 
-# --- ЧТЕНИЕ ФАЙЛОВ С КОМПЬЮТЕРА (.DOCX, .TXT, .MD) ---
+# --- ЧТЕНИЕ И СЖАТИЕ ФАЙЛОВ ---
 def read_uploaded_document(uploaded_file):
     filename = uploaded_file.name
     base_title = filename.rsplit('.', 1)[0]
@@ -546,20 +653,114 @@ def read_uploaded_document(uploaded_file):
             content = raw_bytes.decode('cp1251', errors='replace')
         return base_title, content
 
-# --- СЖАТИЕ ФОТО КАРТОЧЕК ---
-def compress_uploaded_image(uploaded_file):
+def compress_uploaded_image(uploaded_file, max_size=(420, 580), quality=72):
     img = Image.open(uploaded_file)
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
-    img.thumbnail((420, 580))
+    img.thumbnail(max_size)
     buffer = BytesIO()
-    img.save(buffer, format="JPEG", quality=72, optimize=True)
+    img.save(buffer, format="JPEG", quality=quality, optimize=True)
     b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
     return f"data:image/jpeg;base64,{b64_str}"
 
+# --- ФУНКЦИЯ ПОСТРОЕНИЯ ЧИСЛОВОЙ ПРЯМОЙ (ОСИ ПОКАЗАТЕЛЕЙ) ---
+def build_stat_number_line_figure(
+    df_cards, stat_col, stat_label,
+    highlight_val=None, highlight_name="Текущий ввод",
+    tolerance=0, height=190
+):
+    fig = go.Figure()
+
+    # Фоновая горизонтальная ось
+    fig.add_hline(y=0, line_width=2, line_color="#444466", opacity=0.8)
+
+    # Коридор допустимого разброса (± tolerance)
+    if highlight_val is not None and tolerance > 0:
+        fig.add_vrect(
+            x0=highlight_val - tolerance,
+            x1=highlight_val + tolerance,
+            fillcolor="rgba(0, 212, 255, 0.14)",
+            line_width=1,
+            line_dash="dot",
+            line_color="#00d4ff",
+            annotation_text=f"Зона ±{tolerance} ({highlight_val - tolerance} … {highlight_val + tolerance})",
+            annotation_position="top left",
+            annotation_font=dict(color="#00d4ff", size=11)
+        )
+
+    # Отрисовка точек существующих персонажей
+    if not df_cards.empty:
+        df_plot = df_cards.copy()
+        df_plot[stat_col] = pd.to_numeric(df_plot[stat_col], errors='coerce').fillna(0).astype(int)
+        # Небольшое вертикальное смещение для карточек с одинаковым значением, чтобы не слипались
+        df_plot = df_plot.sort_values(by=stat_col)
+        offsets = []
+        counts_per_val = {}
+        for val in df_plot[stat_col]:
+            c = counts_per_val.get(val, 0)
+            counts_per_val[val] = c + 1
+            level = (c // 2 + 1) * 0.16 * (1 if c % 2 == 0 else -1) if c > 0 else 0.0
+            offsets.append(level)
+        df_plot['y_offset'] = offsets
+
+        for align_val, group in df_plot.groupby('Alignment'):
+            color_hex = ALIGN_COLORS.get(align_val, "#ffcc00")
+            fig.add_trace(go.Scatter(
+                x=group[stat_col],
+                y=group['y_offset'],
+                mode='markers+text',
+                name=str(align_val),
+                text=group['Name'],
+                textposition='top center',
+                textfont=dict(size=10, color='#d0d0e0'),
+                marker=dict(size=12, color=color_hex, line=dict(width=1.5, color='#121212'), symbol='circle'),
+                customdata=group[['Faction', 'Strength', 'Agility', 'Mastery', 'Wit', 'Total_Power']],
+                hovertemplate=(
+                    "<b>%{text}</b> (" + str(align_val) + " • %{customdata[0]})<br>" +
+                    f"<b>{stat_label}: %{{x}}</b><br>" +
+                    "С: %{customdata[1]} | Л: %{customdata[2]} | М: %{customdata[3]} | С: %{customdata[4]}<br>" +
+                    "Сумма: %{customdata[5]}<extra></extra>"
+                )
+            ))
+
+    # Золотой ромб текущего вводимого значения
+    if highlight_val is not None:
+        fig.add_trace(go.Scatter(
+            x=[highlight_val],
+            y=[0],
+            mode='markers+text',
+            name='Редактируемая карточка',
+            text=[f"★ {highlight_name} ({highlight_val})"],
+            textposition='bottom center',
+            textfont=dict(size=12, color='#ffd700', family='Courier New'),
+            marker=dict(size=18, color='#ffd700', symbol='diamond', line=dict(width=2, color='#ffffff')),
+            hovertemplate=f"<b>{highlight_name}</b><br>{stat_label}: <b>{highlight_val}</b><extra></extra>"
+        ))
+
+    fig.update_layout(
+        title=dict(text=f"📏 {stat_label}", font=dict(size=14, color="#00d4ff"), x=0.01, y=0.92),
+        height=height,
+        margin=dict(l=20, r=20, t=35, b=25),
+        paper_bgcolor='#161622',
+        plot_bgcolor='#161622',
+        font=dict(color='white'),
+        xaxis=dict(
+            title="",
+            gridcolor='#26263a',
+            zeroline=False,
+            tickfont=dict(size=11, color='#aaaaaa')
+        ),
+        yaxis=dict(
+            visible=False,
+            range=[-0.65, 0.65]
+        ),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11))
+    )
+    return fig
+
 # --- ПАРСИНГ СКРЫТЫХ ЗАГОЛОВКОВ И АВТО-ПОДСВЕТКА ИМЁН ПЕРСОНАЖЕЙ ---
 def render_text_with_spoilers_and_characters(raw_text, matchers, popup_span_map, enable_spoilers=True):
-    lines = raw_text.split('\n')
+    lines = str(raw_text).split('\n')
     html_out = []
     open_levels = []
     found_chars = []
@@ -759,19 +960,116 @@ def inject_card_hover_into_graph(raw_html, node_popup_dict):
     """
     return raw_html.replace("</body>", custom_injection + "\n</body>")
 
+# --- ГЕНЕРАЦИЯ ЭКСПОРТА «БИБЛИИ ВСЕЛЕННОЙ» (.MD И .DOCX) ---
+def generate_universe_markdown(sections, nodes_df, edges_df, cards_df, factions_df, locations_df, timeline_df, archives_df, scripts_df):
+    md = ["# 🌆 БИБЛИЯ ВСЕЛЕННОЙ: БИГ СИТИ\n"]
+    if "Персонажи и Связи" in sections:
+        md.append("## 🌐 1. Персонажи и Карта Связей\n")
+        for _, r in nodes_df.iterrows():
+            name = r.get('Имя / Название персонажа', '')
+            md.append(f"### 👤 {name}")
+            for col in nodes_df.columns:
+                if col not in ['Имя / Название персонажа', 'Заметки'] and str(r.get(col, '')) != 'Не указано':
+                    md.append(f"- **{col}:** {r.get(col)}")
+            if str(r.get('Заметки', '')).strip() not in ['', 'Не указано']:
+                md.append(f"- **Лор / Заметки:** {r.get('Заметки')}")
+            rels = get_character_relations(name, edges_df)
+            if rels:
+                md.append("- **Связи:** " + "; ".join([f"{x['type']} с {x['partner']} (Сила: {x['weight']})" for x in rels]))
+            md.append("")
+
+    if "Игровые Карточки" in sections and not cards_df.empty:
+        md.append("## 🃏 2. Игровые Карточки и Характеристики\n")
+        for _, c in cards_df.iterrows():
+            tot = int(c.get('Strength', 0)) + int(c.get('Agility', 0)) + int(c.get('Mastery', 0)) + int(c.get('Wit', 0))
+            md.append(f"### 🃏 {c.get('Name')} ({c.get('Card_Type')} • {c.get('Alignment')} • {c.get('Faction')})")
+            md.append(f"- **Показатели:** Сила (С): {c.get('Strength')} | Ловкость (Л): {c.get('Agility')} | Мастерство (М): {c.get('Mastery')} | Смекалка (С): {c.get('Wit')} *(Сумма: {tot})*")
+            if str(c.get('Description', '')).strip():
+                md.append(f"- **Эффект / Описание:** {c.get('Description')}")
+            md.append("")
+
+    if "Фракции и Организации" in sections and not factions_df.empty:
+        md.append("## 🏛 3. Фракции и Организации\n")
+        for _, f in factions_df.iterrows():
+            md.append(f"### 🏛 {f.get('Name')}")
+            if f.get('Motto'): md.append(f"*{f.get('Motto')}*")
+            md.append(f"- **Лидер:** {f.get('Leader')} | **Идеология:** {f.get('Ideology')} | **Штаб:** {f.get('Base_Location')} | **Влияние:** {f.get('Influence')}/100")
+            if f.get('Allies'): md.append(f"- **Союзники:** {f.get('Allies')}")
+            if f.get('Enemies'): md.append(f"- **Враги:** {f.get('Enemies')}")
+            if f.get('Description'): md.append(f"\n{f.get('Description')}")
+            md.append("")
+
+    if "Карта Местности (Локации)" in sections and not locations_df.empty:
+        md.append("## 🗺 4. Локации и География\n")
+        for _, l in locations_df.iterrows():
+            md.append(f"### 📍 {l.get('Name')} ({l.get('Region')} — {l.get('Loc_Type')})")
+            md.append(f"- **Контроль:** {l.get('Controlling_Faction')} | **Координаты:** X={l.get('X')}, Y={l.get('Y')}")
+            if l.get('Linked_Characters'): md.append(f"- **Связанные герои:** {l.get('Linked_Characters')}")
+            if l.get('Description'): md.append(f"\n{l.get('Description')}")
+            md.append("")
+
+    if "Хронология Вселенной" in sections and not timeline_df.empty:
+        md.append("## ⏳ 5. Хронология Вселенной\n")
+        t_sorted = timeline_df.sort_values(by='Order_Index')
+        for _, t in t_sorted.iterrows():
+            md.append(f"### [{t.get('Order_Index')}] {t.get('Date_Label')} ({t.get('Era')}) — {t.get('Title')}")
+            if t.get('Location'): md.append(f"- **Место:** {t.get('Location')}")
+            if t.get('Participants'): md.append(f"- **Участники:** {t.get('Participants')}")
+            if t.get('Description'): md.append(f"\n{t.get('Description')}")
+            md.append("")
+
+    if "Архивы и Лор" in sections and not archives_df.empty:
+        md.append("## 📚 6. Архивы и Лор\n")
+        for _, a in archives_df.iterrows():
+            md.append(f"### 📄 {a.get('Title')} [{a.get('Category')}]")
+            md.append(str(a.get('Content', '')) + "\n")
+
+    if "Сценарии и Сюжет" in sections and not scripts_df.empty:
+        md.append("## 🎬 7. Сценарии и Сюжетные Линии\n")
+        for _, s in scripts_df.iterrows():
+            md.append(f"### 🎭 {s.get('Title')} (Арка: {s.get('Act')} | Статус: {s.get('Status')})")
+            md.append(str(s.get('Content', '')) + "\n")
+
+    return "\n".join(md)
+
+def generate_universe_docx(md_text):
+    doc = docx.Document()
+    for line in md_text.split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('# '):
+            doc.add_heading(stripped[2:], level=0)
+        elif stripped.startswith('## '):
+            doc.add_heading(stripped[3:], level=1)
+        elif stripped.startswith('### '):
+            doc.add_heading(stripped[4:], level=2)
+        elif stripped.startswith('- '):
+            doc.add_paragraph(stripped[2:], style='List Bullet')
+        elif stripped == "":
+            continue
+        else:
+            doc.add_paragraph(line)
+    bio = BytesIO()
+    doc.save(bio)
+    bio.seek(0)
+    return bio.getvalue()
+
 # --- ИНИЦИАЛИЗАЦИЯ ДАННЫХ ---
 if 'nodes' not in st.session_state:
-    n, e, a, c, s = load_all_data()
+    n, e, a, c, s, loc, tm, fac = load_all_data()
     st.session_state['nodes'] = n
     st.session_state['edges'] = e
     st.session_state['archives'] = a
     st.session_state['cards'] = c
     st.session_state['scripts'] = s
+    st.session_state['locations'] = loc
+    st.session_state['timeline'] = tm
+    st.session_state['factions'] = fac
 
 if 'config' not in st.session_state:
     st.session_state['config'] = load_config()
 if 'colors' not in st.session_state['config']: st.session_state['config']['colors'] = {}
 if 'options' not in st.session_state['config']: st.session_state['config']['options'] = {}
+if 'region_maps' not in st.session_state['config']: st.session_state['config']['region_maps'] = {}
 
 # --- ЕДИНЫЙ ИНДЕКС ПЕРСОНАЖЕЙ ДЛЯ ПОДСКАЗОК ВО ВСЕХ МОДУЛЯХ ---
 CHAR_LOOKUP = build_universe_character_lookup(
@@ -789,17 +1087,22 @@ app_mode = st.sidebar.radio(
     [
         "🌐 Персонажи и Граф",
         "🃏 Галерея Карточек",
+        "🏛 Фракции и Организации",
+        "🗺 Карта Местности",
+        "⏳ Хронология Вселенной",
         "📚 Архивы и Лор",
-        "🎬 Сценарии и Сюжет"
+        "🎬 Сценарии и Сюжет",
+        "📥 Экспорт «Библии Вселенной»"
     ]
 )
 
 st.sidebar.write("---")
 if st.sidebar.button("🔄 Синхронизировать с облаком", use_container_width=True):
     st.cache_data.clear()
-    n, e, a, c, s = load_all_data()
+    n, e, a, c, s, loc, tm, fac = load_all_data()
     st.session_state['nodes'], st.session_state['edges'] = n, e
     st.session_state['archives'], st.session_state['cards'], st.session_state['scripts'] = a, c, s
+    st.session_state['locations'], st.session_state['timeline'], st.session_state['factions'] = loc, tm, fac
     st.session_state['config'] = load_config()
     st.rerun()
 
@@ -824,12 +1127,12 @@ if CHAR_LOOKUP:
 
 
 # ==============================================================================
-# МОДУЛЬ 1: ПЕРСОНАЖИ, ГРАФ, ДОСЬЕ И СТАТИСТИКА
+# МОДУЛЬ 1: ПЕРСОНАЖИ, ГРАФ, ДОСЬЕ (С ПЕРЕКРЕСТНЫМИ ССЫЛКАМИ) И СТАТИСТИКА
 # ==============================================================================
 if app_mode == "🌐 Персонажи и Граф":
     st.title("🌐 База Персонажей и Карта Связей")
     tab_graph, tab_dossier, tab_chars, tab_edges, tab_stats = st.tabs([
-        "🕸 Интерактивный Граф", "🗂 Досье Персонажа", "👤 Таблица Персонажей", "🔗 Таблица Связей", "📊 Статистика"
+        "🕸 Интерактивный Граф", "🗂 Досье и Перекрестные ссылки", "👤 Таблица Персонажей", "🔗 Таблица Связей", "📊 Статистика"
     ])
 
     with tab_dossier:
@@ -902,6 +1205,50 @@ if app_mode == "🌐 Персонажи и Граф":
                                 st.caption(crd['Description'])
                 else:
                     st.info("К этому персонажу пока не привязано ни одной игровой карточки в Галерее.")
+
+            # --- БЛОК ПЕРЕКРЕСТНЫХ ССЫЛОК ПО ВСЕЙ ЭКОСИСТЕМЕ ---
+            st.write("---")
+            st.subheader("📖 Перекрестные ссылки в экосистеме (Авто-поиск упоминаний)")
+            cross_refs = find_character_mentions_across_ecosystem(
+                sel_hero, CHAR_MATCHERS,
+                st.session_state['archives'],
+                st.session_state['scripts'],
+                st.session_state['locations'],
+                st.session_state['timeline']
+            )
+            cr1, cr2, cr3, cr4 = st.columns(4)
+            with cr1:
+                st.markdown(f"**📚 Архивы ({len(cross_refs['archives'])})**")
+                if cross_refs['archives']:
+                    for item in cross_refs['archives']:
+                        st.markdown(f"▪ **{item['title']}** *({item['cat']})*")
+                        if item['snippet']:
+                            st.caption(f"«{item['snippet']}»")
+                else:
+                    st.caption("Не упоминается в архивах.")
+            with cr2:
+                st.markdown(f"**🎬 Сценарии ({len(cross_refs['scripts'])})**")
+                if cross_refs['scripts']:
+                    for item in cross_refs['scripts']:
+                        st.markdown(f"▪ **{item['title']}** *({item['act']} • {item['status']})*")
+                        if item['snippet']:
+                            st.caption(f"«{item['snippet']}»")
+                else:
+                    st.caption("Не упоминается в сценариях.")
+            with cr3:
+                st.markdown(f"**🗺 Локации ({len(cross_refs['locations'])})**")
+                if cross_refs['locations']:
+                    for item in cross_refs['locations']:
+                        st.markdown(f"▪ 📍 **{item['name']}** *({item['region']} • {item['type']})*")
+                else:
+                    st.caption("Не привязан к локациям.")
+            with cr4:
+                st.markdown(f"**⏳ Хронология ({len(cross_refs['timeline'])})**")
+                if cross_refs['timeline']:
+                    for item in cross_refs['timeline']:
+                        st.markdown(f"▪ 🕰 **{item['date']}**: {item['title']} *({item['era']})*")
+                else:
+                    st.caption("Нет событий в хронологии.")
 
     with tab_stats:
         st.subheader("Аналитика и распределение сил")
@@ -1108,7 +1455,7 @@ if app_mode == "🌐 Персонажи и Граф":
 
 
 # ==============================================================================
-# МОДУЛЬ 2: ГАЛЕРЕЯ КАРТОЧЕК, СВЯЗИ НА ГРАФЕ И БАЛАНС КОЛОДЫ
+# МОДУЛЬ 2: ГАЛЕРЕЯ КАРТОЧЕК, ИНДИКАТОР БАЛАНСА И ПРЯМАЯ ПОКАЗАТЕЛЕЙ (ВСЕ СТАТЫ)
 # ==============================================================================
 elif app_mode == "🃏 Галерея Карточек":
     st.title("🃏 Игровые Карточки БИГ СИТИ")
@@ -1119,10 +1466,14 @@ elif app_mode == "🃏 Галерея Карточек":
 
     valid_graph_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
 
-    tab_gallery, tab_card_stats = st.tabs(["🃏 Коллекция и Конструктор", "📊 Статистика и Баланс Карточек"])
+    tab_gallery, tab_number_lines, tab_card_stats = st.tabs([
+        "🃏 Коллекция и Конструктор",
+        "📏 Прямая Показателей (Все статы)",
+        "📊 Статистика и Баланс Карточек"
+    ])
 
     with tab_gallery:
-        with st.expander("➕ Добавить или отредактировать карточку", expanded=df_cards.empty):
+        with st.expander("➕ Добавить или отредактировать карточку", expanded=True):
             edit_mode = st.selectbox("Выберите карточку для редактирования или создайте новую:", ["Создать новую карточку"] + df_cards['Name'].tolist())
             
             if edit_mode == "Создать новую карточку":
@@ -1166,10 +1517,106 @@ elif app_mode == "🃏 Галерея Карточек":
                     val_agi = st.number_input("⚡ Ловкость (Л):", value=s_agi, step=10)
                     val_wit = st.number_input("🧠 Смекалка (С):", value=s_wit, step=10)
                 
+                val_total = int(val_str) + int(val_agi) + int(val_mas) + int(val_wit)
+                st.caption(f"⚡ **Суммарная мощь текущего ввода:** `{val_total}`")
                 auto_add_to_graph = st.checkbox(
                     "🌐 Автоматически добавить персонажа в базу Графа (если его там ещё нет)",
                     value=(c_type == "Персонаж")
                 )
+
+            # ==================================================================
+            # ⚖️ ЖИВОЙ БАЛАНС И ПРЯМАЯ ПОКАЗАТЕЛЕЙ ПРЯМО ПОД ПОЛЯМИ ВВОДА
+            # ==================================================================
+            st.markdown('<div class="balance-box">', unsafe_allow_html=True)
+            st.markdown("#### ⚖️ Живой баланс и прямая показателей")
+            
+            # Исключаем саму редактируемую карточку из сравнения, чтобы она не сравнивалась сама с собой
+            other_cards_df = df_cards[df_cards['Name'] != edit_mode].copy() if edit_mode != "Создать новую карточку" else df_cards.copy()
+            other_pers_df = other_cards_df[other_cards_df['Card_Type'] == c_type].copy()
+            if other_pers_df.empty:
+                other_pers_df = other_cards_df.copy()
+
+            b_ctrl1, b_ctrl2 = st.columns([1.3, 1.7])
+            with b_ctrl1:
+                axis_stat_choice = st.selectbox(
+                    "📏 Показать числовую прямую для характеристики:",
+                    ["💪 Сила (С)", "⚡ Ловкость (Л)", "🛠 Мастерство (М)", "🧠 Смекалка (С)", "🔥 Суммарная мощь (С+Л+М+С)"],
+                    key="live_axis_stat"
+                )
+            with b_ctrl2:
+                tolerance_val = st.slider(
+                    "🎯 Допустимый разброс (± единиц) для поиска ровни и подсветки коридора:",
+                    min_value=0, max_value=5000, value=500, step=50, key="live_tol_slider"
+                )
+
+            stat_map_live = {
+                "💪 Сила (С)": ("Strength", int(val_str)),
+                "⚡ Ловкость (Л)": ("Agility", int(val_agi)),
+                "🛠 Мастерство (М)": ("Mastery", int(val_mas)),
+                "🧠 Смекалка (С)": ("Wit", int(val_wit)),
+                "🔥 Суммарная мощь (С+Л+М+С)": ("Total_Power", int(val_total))
+            }
+            chosen_col_name, chosen_curr_val = stat_map_live[axis_stat_choice]
+            preview_label = c_name.strip() if c_name.strip() else "Вводимая карточка"
+
+            fig_live_line = build_stat_number_line_figure(
+                other_pers_df,
+                chosen_col_name,
+                axis_stat_choice,
+                highlight_val=chosen_curr_val,
+                highlight_name=preview_label,
+                tolerance=tolerance_val if chosen_col_name != "Total_Power" else tolerance_val * 2,
+                height=210
+            )
+            st.plotly_chart(fig_live_line, use_container_width=True)
+
+            # 4 колонки по показателям С, Л, М, С + блок Суммарной мощи
+            st.markdown(f"**📋 Сравнение с существующими карточками в диапазоне ±{tolerance_val} (и ближайшие соседи):**")
+            stat_Check_list = [
+                ("💪 Сила (С)", "Strength", int(val_str), tolerance_val),
+                ("⚡ Ловкость (Л)", "Agility", int(val_agi), tolerance_val),
+                ("🛠 Мастерство (М)", "Mastery", int(val_mas), tolerance_val),
+                ("🧠 Смекалка (С)", "Wit", int(val_wit), tolerance_val),
+                ("🔥 Сумма", "Total_Power", int(val_total), tolerance_val * 2)
+            ]
+            s_cols = st.columns(5)
+            for idx_s, (s_title, s_col_key, curr_v, tol_v) in enumerate(stat_Check_list):
+                with s_cols[idx_s]:
+                    st.markdown(f"**{s_title}: `{curr_v}`**")
+                    if other_pers_df.empty:
+                        st.caption("База пуста")
+                    else:
+                        other_pers_df['diff'] = other_pers_df[s_col_key] - curr_v
+                        in_range = other_pers_df[other_pers_df['diff'].abs() <= tol_v].sort_values(by='diff', ascending=False)
+                        
+                        weaker_df = other_pers_df[other_pers_df[s_col_key] < curr_v].sort_values(by=s_col_key, ascending=False)
+                        stronger_df = other_pers_df[other_pers_df[s_col_key] > curr_v].sort_values(by=s_col_key, ascending=True)
+
+                        if not stronger_df.empty:
+                            up_r = stronger_df.iloc[0]
+                            st.caption(f"🔼 Сильнее: **{up_r['Name']}** ({up_r[s_col_key]}, `+{up_r[s_col_key]-curr_v}`)")
+                        else:
+                            st.caption("🔼 Сильнее: *нет (Топ-1)*")
+
+                        if not weaker_df.empty:
+                            dn_r = weaker_df.iloc[0]
+                            st.caption(f"🔽 Слабее: **{dn_r['Name']}** ({dn_r[s_col_key]}, `{dn_r[s_col_key]-curr_v}`)")
+                        else:
+                            st.caption("🔽 Слабее: *нет (Минимум)*")
+
+                        st.markdown(f"<div style='font-size:12px; color:#00d4ff; margin-top:4px;'>В коридоре ±{tol_v} ({len(in_range)}):</div>", unsafe_allow_html=True)
+                        if not in_range.empty:
+                            for _, ir in in_range.head(6).iterrows():
+                                d_int = int(ir['diff'])
+                                d_str = f"+{d_int}" if d_int > 0 else ("0" if d_int == 0 else str(d_int))
+                                st.markdown(
+                                    f"<div class='neighbor-card'><span><b>{html.escape(str(ir['Name']))}</b></span>"
+                                    f"<span>{int(ir[s_col_key])} (<b>{d_str}</b>)</span></div>",
+                                    unsafe_allow_html=True
+                                )
+                        else:
+                            st.caption("Никого в диапазоне.")
+            st.markdown('</div>', unsafe_allow_html=True)
 
             img_col1, img_col2 = st.columns(2)
             with img_col1:
@@ -1374,6 +1821,55 @@ elif app_mode == "🃏 Галерея Карточек":
         else:
             st.info("В базе пока нет карточек. Добавьте первую карточку через панель выше!")
 
+    # ==========================================================================
+    # ВКЛАДКА 2: 📏 ПРЯМАЯ ПОКАЗАТЕЛЕЙ (5 ПАРАЛЛЕЛЬНЫХ ОСЕЙ ВСЕХ СТАТОВ)
+    # ==========================================================================
+    with tab_number_lines:
+        st.subheader("📏 Параллельные Числовые Прямые Вселенной (Анализ пустых зон и перекосов)")
+        if df_cards.empty:
+            st.info("Добавьте карточки в базу, чтобы увидеть распределение на числовых прямых.")
+        else:
+            nl_c1, nl_c2, nl_c3 = st.columns(3)
+            with nl_c1:
+                nl_type = st.selectbox("Категория карточек на осях:", ["Персонаж", "Бонус", "Все"], key="nl_type")
+            with nl_c2:
+                nl_facs = ["Все"] + sorted([f for f in df_cards['Faction'].unique().tolist() if f])
+                nl_fac = st.selectbox("Фильтр по фракции:", nl_facs, key="nl_fac")
+            with nl_c3:
+                nl_highlight_card = st.selectbox("🎯 Подсветить карточку ромбом:", ["— Не выделять —"] + df_cards['Name'].tolist(), key="nl_hl")
+
+            nl_df = df_cards.copy()
+            if nl_type != "Все":
+                nl_df = nl_df[nl_df['Card_Type'] == nl_type]
+            if nl_fac != "Все":
+                nl_df = nl_df[nl_df['Faction'] == nl_fac]
+
+            hl_row = None
+            if nl_highlight_card != "— Не выделять —":
+                hl_matches = df_cards[df_cards['Name'] == nl_highlight_card]
+                if not hl_matches.empty:
+                    hl_row = hl_matches.iloc[0]
+
+            five_axes = [
+                ("Strength", "💪 Сила (С)"),
+                ("Agility", "⚡ Ловкость (Л)"),
+                ("Mastery", "🛠 Мастерство (М)"),
+                ("Wit", "🧠 Смекалка (С)"),
+                ("Total_Power", "🔥 Суммарная мощь (С+Л+М+С)")
+            ]
+
+            for col_k, label_k in five_axes:
+                h_val = int(hl_row[col_k]) if hl_row is not None else None
+                h_name = str(hl_row['Name']) if hl_row is not None else ""
+                fig_axis = build_stat_number_line_figure(
+                    nl_df, col_k, label_k,
+                    highlight_val=h_val,
+                    highlight_name=h_name,
+                    tolerance=0,
+                    height=185
+                )
+                st.plotly_chart(fig_axis, use_container_width=True)
+
     with tab_card_stats:
         if df_cards.empty:
             st.info("Добавьте карточки, чтобы увидеть статистику и баланс.")
@@ -1393,8 +1889,7 @@ elif app_mode == "🃏 Галерея Карточек":
                 st.markdown("**Соотношение классов (Герой / Злодей / Нейтралитет)**")
                 al_counts = df_cards['Alignment'].value_counts().reset_index()
                 al_counts.columns = ['Класс', 'Количество']
-                color_map_align = {"Герой": "#4da6ff", "Злодей": "#ff4d4d", "Нейтралитет": "#ffcc00"}
-                fig_al = px.pie(al_counts, values='Количество', names='Класс', hole=0.45, color='Класс', color_discrete_map=color_map_align)
+                fig_al = px.pie(al_counts, values='Количество', names='Класс', hole=0.45, color='Класс', color_discrete_map=ALIGN_COLORS)
                 fig_al.update_traces(textposition='inside', textinfo='percent+label')
                 fig_al.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor='rgba(0,0,0,0)', font_color='white')
                 st.plotly_chart(fig_al, use_container_width=True)
@@ -1406,7 +1901,7 @@ elif app_mode == "🃏 Галерея Карточек":
                     avg_melted = avg_stats.melt(id_vars='Alignment', var_name='Показатель', value_name='Среднее значение')
                     stat_ru = {'Strength': 'Сила (С)', 'Agility': 'Ловкость (Л)', 'Mastery': 'Мастерство (М)', 'Wit': 'Смекалка (С)'}
                     avg_melted['Показатель'] = avg_melted['Показатель'].map(stat_ru)
-                    fig_avg = px.bar(avg_melted, x='Показатель', y='Среднее значение', color='Alignment', barmode='group', color_discrete_map=color_map_align)
+                    fig_avg = px.bar(avg_melted, x='Показатель', y='Среднее значение', color='Alignment', barmode='group', color_discrete_map=ALIGN_COLORS)
                     fig_avg.update_layout(margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
                     st.plotly_chart(fig_avg, use_container_width=True)
                 else:
@@ -1426,13 +1921,437 @@ elif app_mode == "🃏 Галерея Карточек":
             }
             target_m = metric_col_map[rank_metric]
             top_c = df_cards.sort_values(by=target_m, ascending=False).head(10)
-            fig_top = px.bar(top_c, x=target_m, y='Name', color='Alignment', orientation='h', color_discrete_map=color_map_align, text=target_m)
+            fig_top = px.bar(top_c, x=target_m, y='Name', color='Alignment', orientation='h', color_discrete_map=ALIGN_COLORS, text=target_m)
             fig_top.update_layout(yaxis={'categoryorder':'total ascending'}, margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
             st.plotly_chart(fig_top, use_container_width=True)
 
 
 # ==============================================================================
-# МОДУЛЬ 3: АРХИВЫ И ЛОР (С АВТО-ПОДСВЕТКОЙ ИМЁН И ЗАГРУЗКОЙ ФАЙЛОВ)
+# МОДУЛЬ 3: ФРАКЦИИ И ОРГАНИЗАЦИИ (ГЕРБЫ, ДЕВИЗЫ, ВЛИЯНИЕ И АВТО-ПОДСЧЕТ)
+# ==============================================================================
+elif app_mode == "🏛 Фракции и Организации":
+    st.title("🏛 Фракции, Кланы и Организации БИГ СИТИ")
+    df_fac = st.session_state['factions'].copy()
+    all_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
+
+    with st.expander("➕ Создать или отредактировать фракцию", expanded=df_fac.empty):
+        fac_edit = st.selectbox("Выберите фракцию:", ["Создать новую фракцию"] + df_fac['Name'].tolist())
+        if fac_edit == "Создать новую фракцию":
+            f_name, f_motto, f_leader, f_ideo, f_base, f_inf, f_col, f_desc, f_logo, f_allies, f_enemies = (
+                "", "", "Не указано", "", "", 50, "#00d4ff", "", "", "", ""
+            )
+        else:
+            fr = df_fac[df_fac['Name'] == fac_edit].iloc[0]
+            f_name, f_motto, f_leader, f_ideo, f_base = str(fr['Name']), str(fr['Motto']), str(fr['Leader']), str(fr['Ideology']), str(fr['Base_Location'])
+            f_inf = int(fr['Influence'])
+            f_col = str(fr['Color']) if str(fr['Color']).startswith('#') else "#00d4ff"
+            f_desc, f_logo, f_allies, f_enemies = str(fr['Description']), str(fr['Logo_Data']), str(fr['Allies']), str(fr['Enemies'])
+
+        fc1, fc2 = st.columns(2)
+        with fc1:
+            inp_fname = st.text_input("Название фракции / организации:", value=f_name)
+            inp_fmotto = st.text_input("Девиз / Слоган:", value=f_motto)
+            leader_opts = ["Не указано"] + all_chars
+            l_idx = leader_opts.index(f_leader) if f_leader in leader_opts else 0
+            inp_fleader = st.selectbox("Лидер / Глава:", leader_opts, index=l_idx)
+            inp_fideo = st.text_input("Идеология / Направленность:", value=f_ideo)
+            inp_fbase = st.text_input("Штаб-квартира / Главная база:", value=f_base)
+        with fc2:
+            inp_finf = st.slider("📊 Индекс влияния в городе (0 - 100):", 0, 100, f_inf)
+            inp_fcol = st.color_picker("Фирменный цвет фракции:", f_col)
+            inp_fallies = st.text_input("🤝 Союзные фракции (через запятую):", value=f_allies)
+            inp_fenemies = st.text_input("⚔️ Враждебные фракции (через запятую):", value=f_enemies)
+            up_logo = st.file_uploader("🛡 Загрузить герб / логотип:", type=["png", "jpg", "jpeg", "webp"], key="fac_logo_up")
+
+        inp_fdesc = st.text_area("История, структура и цели организации (имена героев подсвечиваются):", value=f_desc, height=110)
+
+        fb1, fb2 = st.columns([3, 1])
+        with fb1:
+            if st.button("💾 Сохранить фракцию", type="primary", use_container_width=True):
+                if inp_fname.strip():
+                    final_logo = compress_uploaded_image(up_logo, max_size=(300, 300)) if up_logo is not None else f_logo
+                    new_f_row = {
+                        "Name": inp_fname.strip(), "Motto": inp_fmotto.strip(), "Leader": inp_fleader,
+                        "Ideology": inp_fideo.strip(), "Base_Location": inp_fbase.strip(),
+                        "Influence": int(inp_finf), "Color": inp_fcol, "Description": inp_fdesc.strip(),
+                        "Logo_Data": final_logo, "Allies": inp_fallies.strip(), "Enemies": inp_fenemies.strip()
+                    }
+                    base_f = st.session_state['factions'][FAC_COLS]
+                    if fac_edit == "Создать новую фракцию":
+                        st.session_state['factions'] = pd.concat([base_f, pd.DataFrame([new_f_row])], ignore_index=True)
+                    else:
+                        idx_f = base_f[base_f['Name'] == fac_edit].index[0]
+                        for k, v in new_f_row.items():
+                            st.session_state['factions'].at[idx_f, k] = v
+                    save_sheet("Factions", st.session_state['factions'][FAC_COLS])
+                    st.success(f"Фракция «{inp_fname.strip()}» сохранена!")
+                    st.rerun()
+                else:
+                    st.warning("Введите название фракции!")
+        with fb2:
+            if fac_edit != "Создать новую фракцию":
+                if st.button("🗑 Удалить фракцию", use_container_width=True):
+                    st.session_state['factions'] = df_fac[df_fac['Name'] != fac_edit].reset_index(drop=True)
+                    save_sheet("Factions", st.session_state['factions'][FAC_COLS])
+                    st.rerun()
+
+    if not df_fac.empty:
+        st.subheader("📊 Распределение влияния в БИГ СИТИ")
+        fig_inf = px.bar(
+            df_fac.sort_values(by='Influence', ascending=True),
+            x='Influence', y='Name', orientation='h', text='Influence',
+            color='Name', color_discrete_sequence=df_fac.sort_values(by='Influence', ascending=True)['Color'].tolist()
+        )
+        fig_inf.update_layout(showlegend=False, height=260, margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
+        st.plotly_chart(fig_inf, use_container_width=True)
+
+        st.write("---")
+        f_cols = st.columns(2)
+        for idx_f, (_, f_row) in enumerate(df_fac.iterrows()):
+            f_title = str(f_row['Name']).strip()
+            # Авто-подсчет участников из Nodes и Cards и локаций из Locations
+            nodes_in_fac = []
+            if 'Группировка' in st.session_state['nodes'].columns:
+                nodes_in_fac = st.session_state['nodes'][
+                    st.session_state['nodes']['Группировка'].astype(str).str.strip().str.lower() == f_title.lower()
+                ]['Имя / Название персонажа'].tolist()
+            cards_in_fac = st.session_state['cards'][
+                st.session_state['cards']['Faction'].astype(str).str.strip().str.lower() == f_title.lower()
+            ]['Name'].tolist()
+            all_members = sorted(list(set(nodes_in_fac + cards_in_fac)))
+
+            locs_in_fac = st.session_state['locations'][
+                st.session_state['locations']['Controlling_Faction'].astype(str).str.strip().str.lower() == f_title.lower()
+            ]['Name'].tolist()
+
+            with f_cols[idx_f % 2]:
+                st.markdown(f"""
+                <div class="game-card" style="border-top: 4px solid {html.escape(str(f_row['Color']))};">
+                    <div class="game-card-header">
+                        <span style="color:{html.escape(str(f_row['Color']))}; font-weight:bold;">ВЛИЯНИЕ: {int(f_row['Influence'])} / 100</span>
+                        <span class="game-card-type">{html.escape(str(f_row['Ideology'] or 'Организация'))}</span>
+                    </div>
+                    <div class="game-card-title">{html.escape(f_title)}</div>
+                    <div style="font-style:italic; color:#ffcc00; font-size:13px; margin-bottom:8px;">«{html.escape(str(f_row['Motto']))}»</div>
+                </div>
+                """, unsafe_allow_html=True)
+                if f_row['Logo_Data']:
+                    st.image(f_row['Logo_Data'], width=140)
+                st.progress(min(max(int(f_row['Influence']), 0), 100) / 100.0)
+                st.markdown(f"👑 **Лидер:** {f_row['Leader']} | 📍 **База:** {f_row['Base_Location'] or 'Не указана'}")
+                if f_row['Allies']: st.markdown(f"🤝 **Союзники:** {f_row['Allies']}")
+                if f_row['Enemies']: st.markdown(f"⚔️ **Враги:** {f_row['Enemies']}")
+                st.markdown(f"👥 **Участники ({len(all_members)}):** {', '.join(all_members) if all_members else 'Пока нет привязанных героев'}")
+                st.markdown(f"🗺 **Подконтрольные территории ({len(locs_in_fac)}):** {', '.join(locs_in_fac) if locs_in_fac else 'Нет точек на карте'}")
+                if f_row['Description']:
+                    hl_fdesc, _ = render_text_with_spoilers_and_characters(
+                        str(f_row['Description']), CHAR_MATCHERS, CHAR_POPUP_SPANS, enable_spoilers=False
+                    )
+                    st.markdown(f"<div class='script-body' style='font-size:14px;'>{hl_fdesc}</div>", unsafe_allow_html=True)
+                st.write("---")
+
+
+# ==============================================================================
+# МОДУЛЬ 4: КАРТА МЕСТНОСТИ (МНОГОУРОВНЕВЫЕ КАРТЫ РЕГИОНОВ С КООРДИНАТАМИ X/Y)
+# ==============================================================================
+elif app_mode == "🗺 Карта Местности":
+    st.title("🗺 Интерактивная Карта Местности и Локаций")
+    df_loc = st.session_state['locations'].copy()
+    all_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
+    all_scripts = st.session_state['scripts']['Title'].dropna().unique().tolist()
+    all_factions = ["Нейтральная территория"] + st.session_state['factions']['Name'].dropna().unique().tolist()
+
+    existing_regions = sorted(list(set(["Глобальная карта (БИГ СИТИ)"] + [r for r in df_loc['Region'].unique().tolist() if str(r).strip()])))
+    col_reg1, col_reg2 = st.columns([2, 1])
+    with col_reg1:
+        active_region = st.selectbox("🌍 Выберите уровень карты / Регион:", existing_regions)
+    with col_reg2:
+        with st.expander("🖼 Фон карты этого региона"):
+            up_reg_bg = st.file_uploader("Загрузить карту региона:", type=["png", "jpg", "jpeg", "webp"], key="reg_bg_up")
+            if up_reg_bg is not None and st.button("Сохранить фон региона"):
+                b64_map = compress_uploaded_image(up_reg_bg, max_size=(1100, 800), quality=78)
+                st.session_state['config'].setdefault('region_maps', {})[active_region] = b64_map
+                save_config_to_cloud(st.session_state['config'])
+                st.success("Фон карты региона сохранен!")
+                st.rerun()
+            if st.session_state['config'].get('region_maps', {}).get(active_region):
+                if st.button("🗑 Удалить фон региона"):
+                    del st.session_state['config']['region_maps'][active_region]
+                    save_config_to_cloud(st.session_state['config'])
+                    st.rerun()
+
+    with st.expander("➕ Добавить или изменить локацию на карте", expanded=df_loc.empty):
+        loc_edit = st.selectbox("Выберите локацию:", ["Создать новую локацию"] + df_loc['Name'].tolist())
+        if loc_edit == "Создать новую локацию":
+            l_name, l_reg, l_type, l_fac, l_x, l_y, l_desc, l_chars, l_scrs = (
+                "", active_region, "Городской объект", "Нейтральная территория", 50.0, 50.0, "", [], []
+            )
+        else:
+            lr = df_loc[df_loc['Name'] == loc_edit].iloc[0]
+            l_name, l_reg, l_type, l_fac = str(lr['Name']), str(lr['Region']), str(lr['Loc_Type']), str(lr['Controlling_Faction'])
+            l_x, l_y = float(lr['X']), float(lr['Y'])
+            l_desc = str(lr['Description'])
+            l_chars = [x.strip() for x in str(lr['Linked_Characters']).split(',') if x.strip() in all_chars]
+            l_scrs = [x.strip() for x in str(lr['Linked_Scripts']).split(',') if x.strip() in all_scripts]
+
+        lc1, lc2 = st.columns(2)
+        with lc1:
+            inp_lname = st.text_input("Название локации:", value=l_name)
+            inp_lreg = st.text_input("Регион / Уровень карты:", value=l_reg)
+            type_l_opts = ["Городской объект", "Штаб / База", "Район / Зона", "Подземелье / Секрет", "Порт / Узел", "Руины / Аномалия"]
+            inp_ltype = st.selectbox("Тип точки:", type_l_opts, index=type_l_opts.index(l_type) if l_type in type_l_opts else 0)
+            inp_lfac = st.selectbox("Под контролем фракции:", all_factions if l_fac in all_factions else all_factions + [l_fac], index=(all_factions.index(l_fac) if l_fac in all_factions else 0))
+        with lc2:
+            xy1, xy2 = st.columns(2)
+            with xy1:
+                inp_lx = st.slider("Координата X (0 - 100):", 0.0, 100.0, float(l_x), step=0.5)
+            with xy2:
+                inp_ly = st.slider("Координата Y (0 - 100):", 0.0, 100.0, float(l_y), step=0.5)
+            inp_lchars = st.multiselect("👥 Привязанные персонажи:", all_chars, default=l_chars)
+            inp_lscrs = st.multiselect("🎬 Связанные сценарии:", all_scripts, default=l_scrs)
+
+        inp_ldesc = st.text_area("Описание локации, секреты и особенности:", value=l_desc, height=90)
+        lb1, lb2 = st.columns([3, 1])
+        with lb1:
+            if st.button("💾 Сохранить локацию", type="primary", use_container_width=True):
+                if inp_lname.strip():
+                    new_l_row = {
+                        "Name": inp_lname.strip(), "Region": inp_lreg.strip() or "Глобальная карта (БИГ СИТИ)",
+                        "Loc_Type": inp_ltype, "Controlling_Faction": inp_lfac,
+                        "X": float(inp_lx), "Y": float(inp_ly),
+                        "Description": inp_ldesc.strip(), "Map_Image": "",
+                        "Linked_Characters": ", ".join(inp_lchars),
+                        "Linked_Scripts": ", ".join(inp_lscrs)
+                    }
+                    base_l = st.session_state['locations'][LOC_COLS]
+                    if loc_edit == "Создать новую локацию":
+                        st.session_state['locations'] = pd.concat([base_l, pd.DataFrame([new_l_row])], ignore_index=True)
+                    else:
+                        idx_l = base_l[base_l['Name'] == loc_edit].index[0]
+                        for k, v in new_l_row.items():
+                            st.session_state['locations'].at[idx_l, k] = v
+                    save_sheet("Locations", st.session_state['locations'][LOC_COLS])
+                    st.success(f"Локация «{inp_lname.strip()}» сохранена на карте!")
+                    st.rerun()
+                else:
+                    st.warning("Введите название локации!")
+        with lb2:
+            if loc_edit != "Создать новую локацию":
+                if st.button("🗑 Удалить локацию", use_container_width=True):
+                    st.session_state['locations'] = df_loc[df_loc['Name'] != loc_edit].reset_index(drop=True)
+                    save_sheet("Locations", st.session_state['locations'][LOC_COLS])
+                    st.rerun()
+
+    # Отрисовка интерактивной карты выбранного региона
+    reg_df = df_loc[df_loc['Region'] == active_region].copy()
+    fig_map = go.Figure()
+
+    bg_map_data = st.session_state['config'].get('region_maps', {}).get(active_region)
+    if bg_map_data:
+        fig_map.add_layout_image(
+            dict(
+                source=bg_map_data,
+                xref="x", yref="y",
+                x=0, y=100,
+                sizex=100, sizey=100,
+                sizing="stretch",
+                opacity=0.85,
+                layer="below"
+            )
+        )
+
+    if not reg_df.empty:
+        for l_type_val, grp in reg_df.groupby('Loc_Type'):
+            fig_map.add_trace(go.Scatter(
+                x=grp['X'], y=grp['Y'],
+                mode='markers+text',
+                name=str(l_type_val),
+                text=grp['Name'],
+                textposition='top center',
+                textfont=dict(size=12, color='#ffffff', family='Courier New'),
+                marker=dict(size=16, symbol='octagon', line=dict(width=2, color='#00d4ff')),
+                customdata=grp[['Controlling_Faction', 'Linked_Characters', 'Linked_Scripts', 'Description']],
+                hovertemplate=(
+                    "<b>📍 %{text}</b> (" + str(l_type_val) + ")<br>"
+                    "Контроль: <b>%{customdata[0]}</b><br>"
+                    "Координаты: X=%{x}, Y=%{y}<br>"
+                    "Герои: %{customdata[1]}<br>"
+                    "Сценарии: %{customdata[2]}<br>"
+                    "<i>%{customdata[3]}</i><extra></extra>"
+                )
+            ))
+
+    fig_map.update_layout(
+        title=dict(text=f"🗺 Регион: {active_region}", font=dict(size=16, color="#00d4ff")),
+        height=560,
+        xaxis=dict(range=[0, 100], showgrid=True, gridcolor='rgba(255,255,255,0.08)', zeroline=False, title="Координата X"),
+        yaxis=dict(range=[0, 100], showgrid=True, gridcolor='rgba(255,255,255,0.08)', zeroline=False, title="Координата Y"),
+        paper_bgcolor='#14141f',
+        plot_bgcolor='#181828',
+        font=dict(color='white'),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig_map, use_container_width=True)
+
+    if not reg_df.empty:
+        st.subheader(f"📍 Объекты региона «{active_region}» ({len(reg_df)})")
+        l_cols = st.columns(2)
+        for i_l, (_, l_item) in enumerate(reg_df.iterrows()):
+            with l_cols[i_l % 2]:
+                st.markdown(f"""
+                <div class="game-card">
+                    <div class="game-card-header">
+                        <span style="color:#ffcc00; font-size:12px;">🏛 {html.escape(str(l_item['Controlling_Faction']))}</span>
+                        <span class="game-card-type">{html.escape(str(l_item['Loc_Type']))} (X:{l_item['X']}, Y:{l_item['Y']})</span>
+                    </div>
+                    <div class="game-card-title">📍 {html.escape(str(l_item['Name']))}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                if l_item['Linked_Characters']:
+                    st.caption(f"👥 **Персонажи:** {l_item['Linked_Characters']}")
+                if l_item['Linked_Scripts']:
+                    st.caption(f"🎬 **Сценарии:** {l_item['Linked_Scripts']}")
+                if l_item['Description']:
+                    hl_ldesc, _ = render_text_with_spoilers_and_characters(
+                        str(l_item['Description']), CHAR_MATCHERS, CHAR_POPUP_SPANS, enable_spoilers=False
+                    )
+                    st.markdown(f"<div class='script-body' style='font-size:14px;'>{hl_ldesc}</div>", unsafe_allow_html=True)
+
+
+# ==============================================================================
+# МОДУЛЬ 5: ХРОНОЛОГИЯ ВСЕЛЕННОЙ (TIMELINE ПО ЭПОХАМ И ИНДЕКСАМ)
+# ==============================================================================
+elif app_mode == "⏳ Хронология Вселенной":
+    st.title("⏳ Хронология и Летопись Вселенной БИГ СИТИ")
+    df_time = st.session_state['timeline'].copy()
+    all_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
+    all_locs = ["Не указано"] + st.session_state['locations']['Name'].dropna().unique().tolist()
+    all_scrs = ["Нет привязки"] + st.session_state['scripts']['Title'].dropna().unique().tolist()
+
+    with st.expander("➕ Добавить или изменить историческое событие", expanded=df_time.empty):
+        ev_options = ["Добавить новое событие"] + [f"[{r['Order_Index']}] {r['Title']}" for _, r in df_time.sort_values(by='Order_Index').iterrows()]
+        ev_edit = st.selectbox("Выберите событие:", ev_options)
+        if ev_edit == "Добавить новое событие":
+            next_idx = int(df_time['Order_Index'].max()) + 10 if not df_time.empty else 10
+            t_idx, t_date, t_era, t_title, t_desc, t_parts, t_loc, t_scr = (
+                next_idx, "", "Эпоха Основания", "", "", [], "Не указано", "Нет привязки"
+            )
+        else:
+            chosen_title = ev_edit.split("] ", 1)[1]
+            tr = df_time[df_time['Title'] == chosen_title].iloc[0]
+            t_idx = int(tr['Order_Index'])
+            t_date, t_era, t_title, t_desc = str(tr['Date_Label']), str(tr['Era']), str(tr['Title']), str(tr['Description'])
+            t_parts = [x.strip() for x in str(tr['Participants']).split(',') if x.strip() in all_chars]
+            t_loc = str(tr['Location']) if str(tr['Location']) in all_locs else "Не указано"
+            t_scr = str(tr['Linked_Script']) if str(tr['Linked_Script']) in all_scrs else "Нет привязки"
+
+        tc1, tc2 = st.columns(2)
+        with tc1:
+            inp_tidx = st.number_input("🔢 Порядковый индекс на шкале времени (для сортировки):", value=t_idx, step=5)
+            inp_tdate = st.text_input("📅 Дата / Временная метка (напр. «За 15 лет до Катаклизма» или «2084 год»):", value=t_date)
+            inp_tera = st.text_input("🏛 Эпоха / Исторический период:", value=t_era)
+            inp_ttitle = st.text_input("📌 Название события:", value=t_title)
+        with tc2:
+            inp_tparts = st.multiselect("👥 Ключевые участники:", all_chars, default=t_parts)
+            inp_tloc = st.selectbox("📍 Локация события:", all_locs, index=all_locs.index(t_loc))
+            inp_tscr = st.selectbox("🎬 Связанный сценарий:", all_scrs, index=all_scrs.index(t_scr))
+
+        inp_tdesc = st.text_area("Подробное описание события (с авто-подсветкой имён героев):", value=t_desc, height=110)
+
+        tb1, tb2 = st.columns([3, 1])
+        with tb1:
+            if st.button("💾 Сохранить событие в летопись", type="primary", use_container_width=True):
+                if inp_ttitle.strip():
+                    new_t_row = {
+                        "Order_Index": int(inp_tidx),
+                        "Date_Label": inp_tdate.strip() or f"Индекс {inp_tidx}",
+                        "Era": inp_tera.strip() or "Общая эпоха",
+                        "Title": inp_ttitle.strip(),
+                        "Description": inp_tdesc.strip(),
+                        "Participants": ", ".join(inp_tparts),
+                        "Location": inp_tloc if inp_tloc != "Не указано" else "",
+                        "Linked_Script": inp_tscr if inp_tscr != "Нет привязки" else ""
+                    }
+                    base_t = st.session_state['timeline'][TIME_COLS]
+                    if ev_edit == "Добавить новое событие":
+                        st.session_state['timeline'] = pd.concat([base_t, pd.DataFrame([new_t_row])], ignore_index=True)
+                    else:
+                        chosen_title = ev_edit.split("] ", 1)[1]
+                        idx_t = base_t[base_t['Title'] == chosen_title].index[0]
+                        for k, v in new_t_row.items():
+                            st.session_state['timeline'].at[idx_t, k] = v
+                    save_sheet("Timeline", st.session_state['timeline'][TIME_COLS])
+                    st.success("Событие сохранено в Хронологию!")
+                    st.rerun()
+                else:
+                    st.warning("Введите название события!")
+        with tb2:
+            if ev_edit != "Добавить новое событие":
+                if st.button("🗑 Удалить событие", use_container_width=True):
+                    chosen_title = ev_edit.split("] ", 1)[1]
+                    st.session_state['timeline'] = df_time[df_time['Title'] != chosen_title].reset_index(drop=True)
+                    save_sheet("Timeline", st.session_state['timeline'][TIME_COLS])
+                    st.rerun()
+
+    if not df_time.empty:
+        eras = ["Все эпохи"] + sorted([e for e in df_time['Era'].unique().tolist() if str(e).strip()])
+        sel_era = st.selectbox("Фильтр по эпохе:", eras)
+        view_time = df_time.sort_values(by='Order_Index')
+        if sel_era != "Все эпохи":
+            view_time = view_time[view_time['Era'] == sel_era]
+
+        # Визуальная шкала времени
+        fig_tl = go.Figure()
+        fig_tl.add_hline(y=0, line_width=3, line_color="#00d4ff")
+        for era_name, grp in view_time.groupby('Era', sort=False):
+            fig_tl.add_trace(go.Scatter(
+                x=grp['Order_Index'],
+                y=[0] * len(grp),
+                mode='markers+text',
+                name=str(era_name),
+                text=grp['Title'],
+                textposition="top center",
+                marker=dict(size=15, symbol="diamond", line=dict(width=2, color="#ffffff")),
+                customdata=grp[['Date_Label', 'Location', 'Participants']],
+                hovertemplate="<b>%{customdata[0]} — %{text}</b><br>Эпоха: " + str(era_name) + "<br>Место: %{customdata[1]}<br>Участники: %{customdata[2]}<extra></extra>"
+            ))
+        fig_tl.update_layout(
+            title=dict(text="🕰 Визуальная шкала хронологии (по числовым индексам)", font=dict(size=14, color="#00d4ff")),
+            height=220,
+            margin=dict(l=20, r=20, t=40, b=25),
+            paper_bgcolor='#161622', plot_bgcolor='#161622', font=dict(color='white'),
+            xaxis=dict(title="Хронологический индекс (Order_Index)", gridcolor='#26263a'),
+            yaxis=dict(visible=False, range=[-0.5, 0.7]),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig_tl, use_container_width=True)
+
+        st.write("---")
+        for _, t_row in view_time.iterrows():
+            st.markdown(f"""
+            <div class="game-card" style="border-left: 4px solid #00d4ff;">
+                <div class="game-card-header">
+                    <span style="color:#ffcc00; font-weight:bold;">📅 {html.escape(str(t_row['Date_Label']))} (Индекс: {int(t_row['Order_Index'])})</span>
+                    <span class="game-card-type">{html.escape(str(t_row['Era']))}</span>
+                </div>
+                <div class="game-card-title">{html.escape(str(t_row['Title']))}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            meta_t = []
+            if t_row['Location']: meta_t.append(f"📍 **Локация:** {t_row['Location']}")
+            if t_row['Participants']: meta_t.append(f"👥 **Участники:** {t_row['Participants']}")
+            if t_row['Linked_Script']: meta_t.append(f"🎬 **Сценарий:** {t_row['Linked_Script']}")
+            if meta_t:
+                st.caption(" | ".join(meta_t))
+            if t_row['Description']:
+                hl_tdesc, t_found = render_text_with_spoilers_and_characters(
+                    str(t_row['Description']), CHAR_MATCHERS, CHAR_POPUP_SPANS, enable_spoilers=False
+                )
+                st.markdown(f"<div class='script-body'>{hl_tdesc}</div>", unsafe_allow_html=True)
+
+
+# ==============================================================================
+# МОДУЛЬ 6: АРХИВЫ И ЛОР (С АВТО-ПОДСВЕТКОЙ ИМЁН И ЗАГРУЗКОЙ ФАЙЛОВ)
 # ==============================================================================
 elif app_mode == "📚 Архивы и Лор":
     st.title("📚 Архивы БИГ СИТИ")
@@ -1536,7 +2455,7 @@ elif app_mode == "📚 Архивы и Лор":
 
 
 # ==============================================================================
-# МОДУЛЬ 4: СЦЕНАРИИ И СЮЖЕТ (СО СПОЙЛЕРАМИ И ИНТЕРАКТИВНЫМИ ИМЕНАМИ ГЕРОЕВ)
+# МОДУЛЬ 7: СЦЕНАРИИ И СЮЖЕТ (СО СПОЙЛЕРАМИ И ИНТЕРАКТИВНЫМИ ИМЕНАМИ ГЕРОЕВ)
 # ==============================================================================
 elif app_mode == "🎬 Сценарии и Сюжет":
     st.title("🎬 Сценарии и Сюжетные Линии")
@@ -1659,3 +2578,61 @@ elif app_mode == "🎬 Сценарии и Сюжет":
                         save_sheet("Scripts", st.session_state['scripts'])
                         st.session_state['selected_script'] = None
                         st.rerun()
+
+
+# ==============================================================================
+# МОДУЛЬ 8: ЭКСПОРТ «БИБЛИИ ВСЕЛЕННОЙ» В WORD (.DOCX) ИЛИ MARKDOWN (.MD)
+# ==============================================================================
+elif app_mode == "📥 Экспорт «Библии Вселенной»":
+    st.title("📥 Экспорт «Библии Вселенной» БИГ СИТИ")
+    st.markdown("Соберите все разделы вашей базы данных в единый структурированный документ **Word (.docx)** или **Markdown (.md)** в один клик.")
+
+    all_export_sections = [
+        "Персонажи и Связи",
+        "Игровые Карточки",
+        "Фракции и Организации",
+        "Карта Местности (Локации)",
+        "Хронология Вселенной",
+        "Архивы и Лор",
+        "Сценарии и Сюжет"
+    ]
+    chosen_sections = st.multiselect(
+        "Выберите разделы для включения в книгу:",
+        all_export_sections,
+        default=all_export_sections
+    )
+
+    compiled_md = generate_universe_markdown(
+        chosen_sections,
+        st.session_state['nodes'],
+        st.session_state['edges'],
+        st.session_state['cards'],
+        st.session_state['factions'],
+        st.session_state['locations'],
+        st.session_state['timeline'],
+        st.session_state['archives'],
+        st.session_state['scripts']
+    )
+    compiled_docx = generate_universe_docx(compiled_md)
+
+    ex_col1, ex_col2 = st.columns(2)
+    with ex_col1:
+        st.download_button(
+            label="📘 Скачать «Библию Вселенной» в Word (.docx)",
+            data=compiled_docx,
+            file_name="BIG_CITY_Universe_Bible.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            type="primary",
+            use_container_width=True
+        )
+    with ex_col2:
+        st.download_button(
+            label="📝 Скачать «Библию Вселенной» в Markdown (.md)",
+            data=compiled_md.encode('utf-8'),
+            file_name="BIG_CITY_Universe_Bible.md",
+            mime="text/markdown",
+            use_container_width=True
+        )
+
+    with st.expander("👁 Предпросмотр собираемого документа", expanded=False):
+        st.markdown(compiled_md)
