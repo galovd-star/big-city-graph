@@ -2052,171 +2052,286 @@ elif app_mode == "🏛 Фракции и Организации":
 
 
 # ==============================================================================
-# МОДУЛЬ 4: КАРТА МЕСТНОСТИ (МНОГОУРОВНЕВЫЕ КАРТЫ РЕГИОНОВ С КООРДИНАТАМИ X/Y)
+# МОДУЛЬ 4: КАРТА МЕСТНОСТИ (КЛИК МЫШЬЮ ПО КАРТИНКЕ + РАЗМЕЩЕНИЕ ГЕРОЕВ И ОБЪЕКТОВ)
 # ==============================================================================
 elif app_mode == "🗺 Карта Местности":
-    st.title("🗺 Интерактивная Карта Местности и Локаций")
+    st.title("🗺 Интерактивная Карта: Размещение кликом мыши")
     df_loc = st.session_state['locations'].copy()
     all_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
     all_scripts = st.session_state['scripts']['Title'].dropna().unique().tolist()
     all_factions = ["Нейтральная территория"] + st.session_state['factions']['Name'].dropna().unique().tolist()
 
+    # Инициализация координат клика в сессии
+    if 'map_clicked_x' not in st.session_state:
+        st.session_state['map_clicked_x'] = 50.0
+    if 'map_clicked_y' not in st.session_state:
+        st.session_state['map_clicked_y'] = 50.0
+
+    # --- 1. ВЫБОР РЕГИОНА И ЗАГРУЗКА КАРТИНКИ ФОНА ---
     existing_regions = sorted(list(set(["Глобальная карта (БИГ СИТИ)"] + [r for r in df_loc['Region'].unique().tolist() if str(r).strip()])))
-    col_reg1, col_reg2 = st.columns([2, 1])
+    col_reg1, col_reg2 = st.columns([2, 1.2])
     with col_reg1:
         active_region = st.selectbox("🌍 Выберите уровень карты / Регион:", existing_regions)
+        new_reg_input = st.text_input("➕ Или введите название нового региона / плана здания:", placeholder="Например: Район Доков / Этаж 1")
+        if new_reg_input.strip():
+            active_region = new_reg_input.strip()
+
     with col_reg2:
-        with st.expander("🖼 Фон карты этого региона"):
-            up_reg_bg = st.file_uploader("Загрузить карту региона:", type=["png", "jpg", "jpeg", "webp"], key="reg_bg_up")
-            if up_reg_bg is not None and st.button("Сохранить фон региона"):
-                b64_map = compress_uploaded_image(up_reg_bg, max_size=(1100, 800), quality=78)
-                st.session_state['config'].setdefault('region_maps', {})[active_region] = b64_map
-                save_config_to_cloud(st.session_state['config'])
-                st.success("Фон карты региона сохранен!")
-                st.rerun()
+        with st.expander("🖼 Фоновая картинка этой карты", expanded=not bool(st.session_state['config'].get('region_maps', {}).get(active_region))):
+            up_reg_bg = st.file_uploader("Загрузить изображение (PNG/JPG):", type=["png", "jpg", "jpeg", "webp"], key="reg_bg_up")
+            bg_url_inp = st.text_input("ИЛИ прямая ссылка на картинку карты:", key="reg_bg_url")
+            if st.button("💾 Установить фон карты", use_container_width=True):
+                if up_reg_bg is not None:
+                    # Сжимаем до безопасного размера для ячейки Google Sheets
+                    b64_map = compress_uploaded_image(up_reg_bg, max_size=(900, 650), quality=70)
+                    st.session_state['config'].setdefault('region_maps', {})[active_region] = b64_map
+                    save_config_to_cloud(st.session_state['config'])
+                    st.success("Картинка карты сохранена!")
+                    st.rerun()
+                elif bg_url_inp.strip():
+                    st.session_state['config'].setdefault('region_maps', {})[active_region] = bg_url_inp.strip()
+                    save_config_to_cloud(st.session_state['config'])
+                    st.success("Ссылка на карту сохранена!")
+                    st.rerun()
+
             if st.session_state['config'].get('region_maps', {}).get(active_region):
-                if st.button("🗑 Удалить фон региона"):
+                if st.button("🗑 Удалить фон региона", use_container_width=True):
                     del st.session_state['config']['region_maps'][active_region]
                     save_config_to_cloud(st.session_state['config'])
                     st.rerun()
 
-    with st.expander("➕ Добавить или изменить локацию на карте", expanded=df_loc.empty):
-        loc_edit = st.selectbox("Выберите локацию:", ["Создать новую локацию"] + df_loc['Name'].tolist())
-        if loc_edit == "Создать новую локацию":
-            l_name, l_reg, l_type, l_fac, l_x, l_y, l_desc, l_chars, l_scrs = (
-                "", active_region, "Городской объект", "Нейтральная территория", 50.0, 50.0, "", [], []
-            )
-        else:
-            lr = df_loc[df_loc['Name'] == loc_edit].iloc[0]
-            l_name, l_reg, l_type, l_fac = str(lr['Name']), str(lr['Region']), str(lr['Loc_Type']), str(lr['Controlling_Faction'])
-            l_x, l_y = float(lr['X']), float(lr['Y'])
-            l_desc = str(lr['Description'])
-            l_chars = [x.strip() for x in str(lr['Linked_Characters']).split(',') if x.strip() in all_chars]
-            l_scrs = [x.strip() for x in str(lr['Linked_Scripts']).split(',') if x.strip() in all_scripts]
+    st.info("👆 **Как размещать:** Кликните мышкой в любую точку на картинке карты ниже — там появится **золотой прицел 🎯**, а координаты автоматически подставятся в панель справа от карты.")
 
-        lc1, lc2 = st.columns(2)
-        with lc1:
-            inp_lname = st.text_input("Название локации:", value=l_name)
-            inp_lreg = st.text_input("Регион / Уровень карты:", value=l_reg)
-            type_l_opts = ["Городской объект", "Штаб / База", "Район / Зона", "Подземелье / Секрет", "Порт / Узел", "Руины / Аномалия"]
-            inp_ltype = st.selectbox("Тип точки:", type_l_opts, index=type_l_opts.index(l_type) if l_type in type_l_opts else 0)
-            inp_lfac = st.selectbox("Под контролем фракции:", all_factions if l_fac in all_factions else all_factions + [l_fac], index=(all_factions.index(l_fac) if l_fac in all_factions else 0))
-        with lc2:
-            xy1, xy2 = st.columns(2)
-            with xy1:
-                inp_lx = st.slider("Координата X (0 - 100):", 0.0, 100.0, float(l_x), step=0.5)
-            with xy2:
-                inp_ly = st.slider("Координата Y (0 - 100):", 0.0, 100.0, float(l_y), step=0.5)
-            inp_lchars = st.multiselect("👥 Привязанные персонажи:", all_chars, default=l_chars)
-            inp_lscrs = st.multiselect("🎬 Связанные сценарии:", all_scripts, default=l_scrs)
+    # --- 2. РАЗДЕЛЕНИЕ ЭКРАНА: СЛЕВА КАРТА С КЛИКОМ, СПРАВА ПАНЕЛЬ РАЗМЕЩЕНИЯ ---
+    map_col, form_col = st.columns([1.85, 1.15])
 
-        inp_ldesc = st.text_area("Описание локации, секреты и особенности:", value=l_desc, height=90)
-        lb1, lb2 = st.columns([3, 1])
-        with lb1:
-            if st.button("💾 Сохранить локацию", type="primary", use_container_width=True):
-                if inp_lname.strip():
-                    new_l_row = {
-                        "Name": inp_lname.strip(), "Region": inp_lreg.strip() or "Глобальная карта (БИГ СИТИ)",
-                        "Loc_Type": inp_ltype, "Controlling_Faction": inp_lfac,
-                        "X": float(inp_lx), "Y": float(inp_ly),
-                        "Description": inp_ldesc.strip(), "Map_Image": "",
-                        "Linked_Characters": ", ".join(inp_lchars),
-                        "Linked_Scripts": ", ".join(inp_lscrs)
-                    }
-                    base_l = st.session_state['locations'][LOC_COLS]
-                    if loc_edit == "Создать новую локацию":
-                        st.session_state['locations'] = pd.concat([base_l, pd.DataFrame([new_l_row])], ignore_index=True)
-                    else:
-                        idx_l = base_l[base_l['Name'] == loc_edit].index[0]
-                        for k, v in new_l_row.items():
-                            st.session_state['locations'].at[idx_l, k] = v
-                    save_sheet("Locations", st.session_state['locations'][LOC_COLS])
-                    st.success(f"Локация «{inp_lname.strip()}» сохранена на карте!")
-                    st.rerun()
-                else:
-                    st.warning("Введите название локации!")
-        with lb2:
-            if loc_edit != "Создать новую локацию":
-                if st.button("🗑 Удалить локацию", use_container_width=True):
-                    st.session_state['locations'] = df_loc[df_loc['Name'] != loc_edit].reset_index(drop=True)
-                    save_sheet("Locations", st.session_state['locations'][LOC_COLS])
-                    st.rerun()
-
-    # Отрисовка интерактивной карты выбранного региона
     reg_df = df_loc[df_loc['Region'] == active_region].copy()
-    fig_map = go.Figure()
 
-    bg_map_data = st.session_state['config'].get('region_maps', {}).get(active_region)
-    if bg_map_data:
-        fig_map.add_layout_image(
-            dict(
-                source=bg_map_data,
-                xref="x", yref="y",
-                x=0, y=100,
-                sizex=100, sizey=100,
-                sizing="stretch",
-                opacity=0.85,
-                layer="below"
+    with map_col:
+        fig_map = go.Figure()
+
+        # А) Накладываем картинку карты на оси (от 0 до 100 по X и Y)
+        bg_map_data = st.session_state['config'].get('region_maps', {}).get(active_region)
+        if bg_map_data:
+            fig_map.add_layout_image(
+                dict(
+                    source=bg_map_data,
+                    xref="x", yref="y",
+                    x=0, y=100,
+                    sizex=100, sizey=100,
+                    sizing="stretch",
+                    opacity=0.92,
+                    layer="below"
+                )
             )
+
+        # Б) Невидимая сетка для перехвата клика мыши в любой точке картинки (шаг 2)
+        grid_x, grid_y = [], []
+        for gx in range(0, 102, 2):
+            for gy in range(0, 102, 2):
+                grid_x.append(gx)
+                grid_y.append(gy)
+
+        fig_map.add_trace(go.Scatter(
+            x=grid_x,
+            y=grid_y,
+            mode='markers',
+            name='Сетка клика',
+            showlegend=False,
+            marker=dict(size=14, color='rgba(0, 0, 0, 0.005)'), # Полностью прозрачные маркеры
+            hoverinfo='x+y',
+            hovertemplate="🎯 Кликните сюда, чтобы выбрать: X=%{x}, Y=%{y}<extra></extra>"
+        ))
+
+        # В) Отрисовка уже размещенных объектов и персонажей на карте
+        if not reg_df.empty:
+            type_style_map = {
+                "👤 Персонаж на карте": ("circle", "#00d4ff", 18),
+                "Городской объект": ("octagon", "#ffcc00", 16),
+                "Штаб / База": ("star", "#ff4d4d", 19),
+                "Район / Зона": ("hexagon", "#33cc33", 17),
+                "Подземелье / Секрет": ("diamond", "#9933ff", 16),
+                "Порт / Узел": ("square", "#ff9933", 15),
+                "Руины / Аномалия": ("cross", "#ff66b2", 16)
+            }
+
+            for l_type_val, grp in reg_df.groupby('Loc_Type'):
+                sym, col_m, sz = type_style_map.get(str(l_type_val), ("octagon", "#00d4ff", 16))
+                fig_map.add_trace(go.Scatter(
+                    x=grp['X'], y=grp['Y'],
+                    mode='markers+text',
+                    name=str(l_type_val),
+                    text=grp['Name'],
+                    textposition='top center',
+                    textfont=dict(size=12, color='#ffffff', family='Courier New'),
+                    marker=dict(size=sz, symbol=sym, color=col_m, line=dict(width=2, color='#121212')),
+                    customdata=grp[['Controlling_Faction', 'Linked_Characters', 'Linked_Scripts', 'Description']],
+                    hovertemplate=(
+                        "<b>%{text}</b> (" + str(l_type_val) + ")<br>"
+                        "Фракция/Контроль: <b>%{customdata[0]}</b><br>"
+                        "Координаты: X=%{x}, Y=%{y}<br>"
+                        "Герои: %{customdata[1]}<br>"
+                        "<i>%{customdata[3]}</i><extra></extra>"
+                    )
+                ))
+
+        # Г) Золотой прицел в точке последнего клика мыши
+        fig_map.add_trace(go.Scatter(
+            x=[st.session_state['map_clicked_x']],
+            y=[st.session_state['map_clicked_y']],
+            mode='markers+text',
+            name='🎯 Выбранная точка',
+            text=[f"🎯 ({st.session_state['map_clicked_x']}, {st.session_state['map_clicked_y']})"],
+            textposition='bottom center',
+            textfont=dict(size=11, color='#ffd700', family='Courier New'),
+            marker=dict(size=20, symbol='cross-thin', color='#ffd700', line=dict(width=3, color='#ffd700')),
+            hoverinfo='skip'
+        ))
+
+        fig_map.update_layout(
+            title=dict(text=f"🗺 {active_region}", font=dict(size=16, color="#00d4ff")),
+            height=620,
+            margin=dict(l=10, r=10, t=40, b=10),
+            xaxis=dict(range=[0, 100], showgrid=True, gridcolor='rgba(255,255,255,0.07)', zeroline=False, fixedrange=False, title="Ось X"),
+            yaxis=dict(range=[0, 100], showgrid=True, gridcolor='rgba(255,255,255,0.07)', zeroline=False, fixedrange=False, title="Ось Y"),
+            paper_bgcolor='#14141f',
+            plot_bgcolor='#181828',
+            font=dict(color='white'),
+            legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1),
+            clickmode='event+select',
+            dragmode='pan'
         )
 
-    if not reg_df.empty:
-        for l_type_val, grp in reg_df.groupby('Loc_Type'):
-            fig_map.add_trace(go.Scatter(
-                x=grp['X'], y=grp['Y'],
-                mode='markers+text',
-                name=str(l_type_val),
-                text=grp['Name'],
-                textposition='top center',
-                textfont=dict(size=12, color='#ffffff', family='Courier New'),
-                marker=dict(size=16, symbol='octagon', line=dict(width=2, color='#00d4ff')),
-                customdata=grp[['Controlling_Faction', 'Linked_Characters', 'Linked_Scripts', 'Description']],
-                hovertemplate=(
-                    "<b>📍 %{text}</b> (" + str(l_type_val) + ")<br>"
-                    "Контроль: <b>%{customdata[0]}</b><br>"
-                    "Координаты: X=%{x}, Y=%{y}<br>"
-                    "Герои: %{customdata[1]}<br>"
-                    "Сценарии: %{customdata[2]}<br>"
-                    "<i>%{customdata[3]}</i><extra></extra>"
+        # Включаем интерактивный перехват кликов по графику
+        map_event = st.plotly_chart(
+            fig_map,
+            use_container_width=True,
+            on_select="rerun",
+            selection_mode="points",
+            key=f"interactive_map_{active_region}"
+        )
+
+        # Если пользователь кликнул на карту — обновляем координаты прицела
+        if map_event and "selection" in map_event and map_event["selection"].get("points"):
+            pt = map_event["selection"]["points"][0]
+            new_x = float(pt.get("x", st.session_state['map_clicked_x']))
+            new_y = float(pt.get("y", st.session_state['map_clicked_y']))
+            if (new_x, new_y) != (st.session_state['map_clicked_x'], st.session_state['map_clicked_y']):
+                st.session_state['map_clicked_x'] = new_x
+                st.session_state['map_clicked_y'] = new_y
+                st.rerun()
+
+    # --- 3. ПРАВАЯ ПАНЕЛЬ: РАЗМЕЩЕНИЕ ПЕРСОНАЖА ИЛИ ОБЪЕКТА В ТОЧКУ КЛИКА ---
+    with form_col:
+        st.subheader("🎯 Панель размещения")
+        st.markdown(f"**Координаты прицела:** `X = {st.session_state['map_clicked_x']}` | `Y = {st.session_state['map_clicked_y']}`")
+
+        place_mode = st.radio(
+            "Что разместить / изменить в точке клика:",
+            ["👤 Разместить Персонажа", "📍 Создать / Изменить Объект"],
+            horizontal=True
+        )
+
+        if place_mode == "👤 Разместить Персонажа":
+            if not all_chars:
+                st.warning("В базе пока нет персонажей.")
+            else:
+                sel_char_map = st.selectbox("Выберите персонажа:", all_chars, key="map_char_sel")
+                char_info = CHAR_LOOKUP.get(sel_char_map, {})
+                default_fac = char_info.get("faction", "Нейтральная территория") if char_info.get("faction") else "Нейтральная территория"
+                char_note = st.text_input("Статус / Что делает в этой точке:", value="Находится здесь")
+
+                if st.button("📌 Поставить персонажа в точку 🎯", type="primary", use_container_width=True):
+                    marker_name = f"👤 {sel_char_map}"
+                    new_c_loc = {
+                        "Name": marker_name,
+                        "Region": active_region,
+                        "Loc_Type": "👤 Персонаж на карте",
+                        "Controlling_Faction": default_fac,
+                        "X": float(st.session_state['map_clicked_x']),
+                        "Y": float(st.session_state['map_clicked_y']),
+                        "Description": char_note.strip(),
+                        "Map_Image": "",
+                        "Linked_Characters": sel_char_map,
+                        "Linked_Scripts": ""
+                    }
+                    base_l = st.session_state['locations'][LOC_COLS]
+                    # Если этот персонаж уже стоит в этом регионе — просто двигаем его в новую точку клика!
+                    existing_mask = (base_l['Name'] == marker_name) & (base_l['Region'] == active_region)
+                    if existing_mask.any():
+                        idx_m = base_l[existing_mask].index[0]
+                        for k, v in new_c_loc.items():
+                            st.session_state['locations'].at[idx_m, k] = v
+                    else:
+                        st.session_state['locations'] = pd.concat([base_l, pd.DataFrame([new_c_loc])], ignore_index=True)
+
+                    save_sheet("Locations", st.session_state['locations'][LOC_COLS])
+                    st.success(f"{sel_char_map} размещен в точке ({st.session_state['map_clicked_x']}, {st.session_state['map_clicked_y']})!")
+                    st.rerun()
+
+        else:
+            loc_edit = st.selectbox("Выберите объект:", ["➕ Новый объект в точке 🎯"] + reg_df['Name'].tolist())
+            if loc_edit == "➕ Новый объект в точке 🎯":
+                l_name, l_type, l_fac, l_desc, l_chars, l_scrs = (
+                    "", "Городской объект", "Нейтральная территория", "", [], []
                 )
-            ))
+                cur_x, cur_y = st.session_state['map_clicked_x'], st.session_state['map_clicked_y']
+            else:
+                lr = reg_df[reg_df['Name'] == loc_edit].iloc[0]
+                l_name, l_type, l_fac = str(lr['Name']), str(lr['Loc_Type']), str(lr['Controlling_Faction'])
+                l_desc = str(lr['Description'])
+                l_chars = [x.strip() for x in str(lr['Linked_Characters']).split(',') if x.strip() in all_chars]
+                l_scrs = [x.strip() for x in str(lr['Linked_Scripts']).split(',') if x.strip() in all_scripts]
+                cur_x, cur_y = float(lr['X']), float(lr['Y'])
 
-    fig_map.update_layout(
-        title=dict(text=f"🗺 Регион: {active_region}", font=dict(size=16, color="#00d4ff")),
-        height=560,
-        xaxis=dict(range=[0, 100], showgrid=True, gridcolor='rgba(255,255,255,0.08)', zeroline=False, title="Координата X"),
-        yaxis=dict(range=[0, 100], showgrid=True, gridcolor='rgba(255,255,255,0.08)', zeroline=False, title="Координата Y"),
-        paper_bgcolor='#14141f',
-        plot_bgcolor='#181828',
-        font=dict(color='white'),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    st.plotly_chart(fig_map, use_container_width=True)
+            inp_lname = st.text_input("Название объекта / локации:", value=l_name)
+            type_l_opts = ["Городской объект", "Штаб / База", "Район / Зона", "Подземелье / Секрет", "Порт / Узел", "Руины / Аномалия", "👤 Персонаж на карте"]
+            inp_ltype = st.selectbox("Тип точки:", type_l_opts, index=type_l_opts.index(l_type) if l_type in type_l_opts else 0)
+            fac_opts = all_factions if l_fac in all_factions else all_factions + [l_fac]
+            inp_lfac = st.selectbox("Контролирующая фракция:", fac_opts, index=fac_opts.index(l_fac))
 
-    if not reg_df.empty:
-        st.subheader(f"📍 Объекты региона «{active_region}» ({len(reg_df)})")
-        l_cols = st.columns(2)
-        for i_l, (_, l_item) in enumerate(reg_df.iterrows()):
-            with l_cols[i_l % 2]:
-                st.markdown(f"""
-                <div class="game-card">
-                    <div class="game-card-header">
-                        <span style="color:#ffcc00; font-size:12px;">🏛 {html.escape(str(l_item['Controlling_Faction']))}</span>
-                        <span class="game-card-type">{html.escape(str(l_item['Loc_Type']))} (X:{l_item['X']}, Y:{l_item['Y']})</span>
-                    </div>
-                    <div class="game-card-title">📍 {html.escape(str(l_item['Name']))}</div>
-                </div>
-                """, unsafe_allow_html=True)
-                if l_item['Linked_Characters']:
-                    st.caption(f"👥 **Персонажи:** {l_item['Linked_Characters']}")
-                if l_item['Linked_Scripts']:
-                    st.caption(f"🎬 **Сценарии:** {l_item['Linked_Scripts']}")
-                if l_item['Description']:
-                    hl_ldesc, _ = render_text_with_spoilers_and_characters(
-                        str(l_item['Description']), CHAR_MATCHERS, CHAR_POPUP_SPANS, enable_spoilers=False
-                    )
-                    st.markdown(f"<div class='script-body' style='font-size:14px;'>{hl_ldesc}</div>", unsafe_allow_html=True)
+            use_click_coords = st.checkbox("🎯 Применить координаты последнего клика мыши", value=True)
+            final_x = st.session_state['map_clicked_x'] if use_click_coords else cur_x
+            final_y = st.session_state['map_clicked_y'] if use_click_coords else cur_y
 
+            inp_lchars = st.multiselect("👥 Привязанные персонажи:", all_chars, default=l_chars)
+            inp_lscrs = st.multiselect("🎬 Связанные сценарии:", all_scripts, default=l_scrs)
+            inp_ldesc = st.text_area("Описание / Лор объекта:", value=l_desc, height=75)
+
+            b_save, b_del = st.columns([2, 1])
+            with b_save:
+                if st.button("💾 Сохранить на карте", type="primary", use_container_width=True):
+                    if inp_lname.strip():
+                        new_l_row = {
+                            "Name": inp_lname.strip(),
+                            "Region": active_region,
+                            "Loc_Type": inp_ltype,
+                            "Controlling_Faction": inp_lfac,
+                            "X": float(final_x),
+                            "Y": float(final_y),
+                            "Description": inp_ldesc.strip(),
+                            "Map_Image": "",
+                            "Linked_Characters": ", ".join(inp_lchars),
+                            "Linked_Scripts": ", ".join(inp_lscrs)
+                        }
+                        base_l = st.session_state['locations'][LOC_COLS]
+                        if loc_edit == "➕ Новый объект в точке 🎯":
+                            st.session_state['locations'] = pd.concat([base_l, pd.DataFrame([new_l_row])], ignore_index=True)
+                        else:
+                            idx_l = base_l[(base_l['Name'] == loc_edit) & (base_l['Region'] == active_region)].index[0]
+                            for k, v in new_l_row.items():
+                                st.session_state['locations'].at[idx_l, k] = v
+                        save_sheet("Locations", st.session_state['locations'][LOC_COLS])
+                        st.success("Точка сохранена!")
+                        st.rerun()
+                    else:
+                        st.warning("Введите название!")
+            with b_del:
+                if loc_edit != "➕ Новый объект в точке 🎯":
+                    if st.button("🗑 Удалить", use_container_width=True):
+                        st.session_state['locations'] = df_loc[~((df_loc['Name'] == loc_edit) & (df_loc['Region'] == active_region))].reset_index(drop=True)
+                        save_sheet("Locations", st.session_state['locations'][LOC_COLS])
+                        st.rerun()
 
 # ==============================================================================
 # МОДУЛЬ 5: ХРОНОЛОГИЯ ВСЕЛЕННОЙ (TIMELINE ПО ЭПОХАМ И ИНДЕКСАМ)
