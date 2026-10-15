@@ -4,3 +4,4 @@ pyvis
 st-gsheets-connection
 plotly
 Pillow
+python-docx
