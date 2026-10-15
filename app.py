@@ -206,7 +206,7 @@ TIME_COLS = [
     'Description', 'Participants', 'Location', 'Linked_Script'
 ]
 FAC_COLS = [
-    'Name', 'Motto', 'Leader', 'Ideology', 'Base_Location',
+    'Name', 'Org_Category', 'Motto', 'Leader', 'Ideology', 'Base_Location',
     'Influence', 'Color', 'Description', 'Logo_Data', 'Allies', 'Enemies'
 ]
 
@@ -226,6 +226,8 @@ def safe_read_sheet(worksheet_name, default_cols):
                     df[col] = 'Персонаж'
                 elif col == 'Alignment':
                     df[col] = 'Нейтралитет'
+                elif col == 'Org_Category':
+                    df[col] = 'Группировка'
                 elif col == 'Color':
                     df[col] = '#00d4ff'
                 elif col in [
@@ -260,6 +262,9 @@ def load_all_data():
     
     factions = safe_read_sheet("Factions", FAC_COLS)
     factions['Influence'] = pd.to_numeric(factions['Influence'], errors='coerce').fillna(50).astype(int)
+    if 'Org_Category' not in factions.columns:
+        factions['Org_Category'] = 'Группировка'
+    factions['Org_Category'] = factions['Org_Category'].replace("", "Группировка")
     
     return nodes, edges, archives, cards, scripts, locations, timeline, factions
 
@@ -438,7 +443,6 @@ def build_character_matchers(char_names):
     return patterns
 
 def find_character_mentions_across_ecosystem(char_name, matchers, archives_df, scripts_df, locations_df, timeline_df):
-    """Ищет все упоминания выбранного героя во всех модулях экосистемы."""
     char_pats = [pat for pat, canon in matchers if canon == char_name]
     results = {"archives": [], "scripts": [], "locations": [], "timeline": []}
     if not char_pats:
@@ -671,10 +675,8 @@ def build_stat_number_line_figure(
 ):
     fig = go.Figure()
 
-    # Фоновая горизонтальная ось
     fig.add_hline(y=0, line_width=2, line_color="#444466", opacity=0.8)
 
-    # Коридор допустимого разброса (± tolerance)
     if highlight_val is not None and tolerance > 0:
         fig.add_vrect(
             x0=highlight_val - tolerance,
@@ -688,11 +690,9 @@ def build_stat_number_line_figure(
             annotation_font=dict(color="#00d4ff", size=11)
         )
 
-    # Отрисовка точек существующих персонажей
     if not df_cards.empty:
         df_plot = df_cards.copy()
         df_plot[stat_col] = pd.to_numeric(df_plot[stat_col], errors='coerce').fillna(0).astype(int)
-        # Небольшое вертикальное смещение для карточек с одинаковым значением, чтобы не слипались
         df_plot = df_plot.sort_values(by=stat_col)
         offsets = []
         counts_per_val = {}
@@ -723,7 +723,6 @@ def build_stat_number_line_figure(
                 )
             ))
 
-    # Золотой ромб текущего вводимого значения
     if highlight_val is not None:
         fig.add_trace(go.Scatter(
             x=[highlight_val],
@@ -989,9 +988,10 @@ def generate_universe_markdown(sections, nodes_df, edges_df, cards_df, factions_
             md.append("")
 
     if "Фракции и Организации" in sections and not factions_df.empty:
-        md.append("## 🏛 3. Фракции и Организации\n")
+        md.append("## 🏛 3. Фракции, Кланы и Организации\n")
         for _, f in factions_df.iterrows():
-            md.append(f"### 🏛 {f.get('Name')}")
+            cat_str = f.get('Org_Category', 'Группировка')
+            md.append(f"### 🏛 {f.get('Name')} ({cat_str})")
             if f.get('Motto'): md.append(f"*{f.get('Motto')}*")
             md.append(f"- **Лидер:** {f.get('Leader')} | **Идеология:** {f.get('Ideology')} | **Штаб:** {f.get('Base_Location')} | **Влияние:** {f.get('Influence')}/100")
             if f.get('Allies'): md.append(f"- **Союзники:** {f.get('Allies')}")
@@ -1306,7 +1306,7 @@ if app_mode == "🌐 Персонажи и Граф":
         col_menu1, col_menu2 = st.columns(2)
         with col_menu1:
             with st.expander("⚙️ Управление столбцами"):
-                new_col = st.text_input("Новый столбец (напр. Оружие, Раса):").strip()
+                new_col = st.text_input("Новый столбец (напр. Клан, Оружие, Раса):").strip()
                 if st.button("➕ Создать столбец"):
                     if new_col and new_col not in st.session_state['nodes'].columns:
                         st.session_state['nodes'][new_col] = "Не указано"
@@ -1344,14 +1344,29 @@ if app_mode == "🌐 Персонажи и Граф":
                                 st.success(f"'{nv_name}' добавлен!")
                                 st.rerun()
 
+        # Синхронизация выпадающих списков таблицы Графа с модулем Фракций, Кланов и Организаций
         col_config = {
             "Имя / Название персонажа": st.column_config.TextColumn("Имя (уникальное)", required=True),
             "Заметки": st.column_config.TextColumn("Способности / Лор")
         }
+        
+        df_fac_sync = st.session_state.get('factions', pd.DataFrame(columns=FAC_COLS))
+        all_fac_names = df_fac_sync['Name'].dropna().unique().tolist() if not df_fac_sync.empty else []
+
         for col in custom_cols:
-            existing_opts = list(st.session_state['nodes'][col].dropna().unique())
+            existing_opts = [str(x) for x in st.session_state['nodes'][col].dropna().unique() if str(x).strip()]
             saved_opts = st.session_state['config']['options'].get(col, [])
-            all_opts = list(set(existing_opts + saved_opts + ["Не указано"]))
+            
+            matched_facs = []
+            if not df_fac_sync.empty and 'Org_Category' in df_fac_sync.columns:
+                matched_facs = df_fac_sync[
+                    df_fac_sync['Org_Category'].astype(str).str.strip().str.lower() == col.strip().lower()
+                ]['Name'].dropna().tolist()
+            
+            if col.strip().lower() in ["группировка", "фракция", "организация", "клан"]:
+                matched_facs = list(set(matched_facs + all_fac_names))
+
+            all_opts = sorted(list(set(existing_opts + saved_opts + matched_facs + ["Не указано"])))
             col_config[col] = st.column_config.SelectboxColumn(col, options=all_opts)
 
         edited_nodes = st.data_editor(st.session_state['nodes'], num_rows="dynamic", use_container_width=True, height=550, column_config=col_config)
@@ -1477,14 +1492,14 @@ elif app_mode == "🃏 Галерея Карточек":
             edit_mode = st.selectbox("Выберите карточку для редактирования или создайте новую:", ["Создать новую карточку"] + df_cards['Name'].tolist())
             
             if edit_mode == "Создать новую карточку":
-                c_name_val, c_type_val, c_align_val, c_fac_val, c_desc_val, c_img_val, c_link_val = "", "Персонаж", "Нейтралитет", "", "", "", "— Авто / По имени —"
+                c_name_val, c_type_val, c_align_val, c_fac_val, c_desc_val, c_img_val, c_link_val = "", "Персонаж", "Нейтралитет", "Общие", "", "", "— Авто / По имени —"
                 s_str, s_agi, s_mas, s_wit = 8000, 8000, 8000, 8000
             else:
                 row_c = df_cards[df_cards['Name'] == edit_mode].iloc[0]
                 c_name_val = str(row_c['Name'])
                 c_type_val = str(row_c['Card_Type']) if row_c['Card_Type'] in ["Персонаж", "Бонус"] else "Персонаж"
                 c_align_val = str(row_c['Alignment']) if row_c['Alignment'] in ["Герой", "Злодей", "Нейтралитет"] else "Нейтралитет"
-                c_fac_val = str(row_c['Faction'])
+                c_fac_val = str(row_c['Faction']) or "Общие"
                 c_desc_val = str(row_c['Description'])
                 c_img_val = str(row_c['Image_Data'])
                 saved_link = str(row_c.get('Linked_Character', '')).strip()
@@ -1505,7 +1520,23 @@ elif app_mode == "🃏 Галерея Карточек":
                 link_options = ["— Авто / По имени —"] + valid_graph_chars
                 c_link_idx = link_options.index(c_link_val) if c_link_val in link_options else 0
                 c_linked_char = st.selectbox("🔗 Привязка к профилю на графе:", link_options, index=c_link_idx)
-                c_fac = st.text_input("Фракция / Принадлежность:", value=c_fac_val)
+                
+                # Выпадающий список фракций/кланов, синхронизированный с модулем Фракций
+                fac_from_mod = st.session_state['factions']['Name'].dropna().unique().tolist() if not st.session_state['factions'].empty else []
+                fac_from_cards = [f for f in df_cards['Faction'].dropna().unique().tolist() if str(f).strip()]
+                all_known_facs = sorted(list(set(["Общие", "Нейтралитет"] + fac_from_mod + fac_from_cards)))
+                if c_fac_val and c_fac_val not in all_known_facs:
+                    all_known_facs.append(c_fac_val)
+
+                sel_fac_card = st.selectbox(
+                    "🏛 Фракция / Клан / Организация:",
+                    all_known_facs + ["➕ Ввести новую вручную..."],
+                    index=all_known_facs.index(c_fac_val) if c_fac_val in all_known_facs else 0
+                )
+                if sel_fac_card == "➕ Ввести новую вручную...":
+                    c_fac = st.text_input("Введите название новой фракции/клана:", value="")
+                else:
+                    c_fac = sel_fac_card
 
             with col_f2:
                 st.markdown("**Показатели карточки (или прибавка от бонуса):**")
@@ -1530,7 +1561,6 @@ elif app_mode == "🃏 Галерея Карточек":
             st.markdown('<div class="balance-box">', unsafe_allow_html=True)
             st.markdown("#### ⚖️ Живой баланс и прямая показателей")
             
-            # Исключаем саму редактируемую карточку из сравнения, чтобы она не сравнивалась сама с собой
             other_cards_df = df_cards[df_cards['Name'] != edit_mode].copy() if edit_mode != "Создать новую карточку" else df_cards.copy()
             other_pers_df = other_cards_df[other_cards_df['Card_Type'] == c_type].copy()
             if other_pers_df.empty:
@@ -1570,9 +1600,8 @@ elif app_mode == "🃏 Галерея Карточек":
             )
             st.plotly_chart(fig_live_line, use_container_width=True)
 
-            # 4 колонки по показателям С, Л, М, С + блок Суммарной мощи
             st.markdown(f"**📋 Сравнение с существующими карточками в диапазоне ±{tolerance_val} (и ближайшие соседи):**")
-            stat_Check_list = [
+            stat_check_list = [
                 ("💪 Сила (С)", "Strength", int(val_str), tolerance_val),
                 ("⚡ Ловкость (Л)", "Agility", int(val_agi), tolerance_val),
                 ("🛠 Мастерство (М)", "Mastery", int(val_mas), tolerance_val),
@@ -1580,7 +1609,7 @@ elif app_mode == "🃏 Галерея Карточек":
                 ("🔥 Сумма", "Total_Power", int(val_total), tolerance_val * 2)
             ]
             s_cols = st.columns(5)
-            for idx_s, (s_title, s_col_key, curr_v, tol_v) in enumerate(stat_Check_list):
+            for idx_s, (s_title, s_col_key, curr_v, tol_v) in enumerate(stat_check_list):
                 with s_cols[idx_s]:
                     st.markdown(f"**{s_title}: `{curr_v}`**")
                     if other_pers_df.empty:
@@ -1637,12 +1666,13 @@ elif app_mode == "🃏 Галерея Карточек":
                             final_img = c_url.strip()
 
                         resolved_link = c_name.strip() if c_linked_char == "— Авто / По имени —" else c_linked_char
+                        clean_fac_val = c_fac.strip() or "Общие"
 
                         new_card_data = {
                             "Name": c_name.strip(),
                             "Card_Type": c_type,
                             "Alignment": c_align,
-                            "Faction": c_fac.strip() or "Общие",
+                            "Faction": clean_fac_val,
                             "Strength": int(val_str),
                             "Agility": int(val_agi),
                             "Mastery": int(val_mas),
@@ -1667,7 +1697,7 @@ elif app_mode == "🃏 Галерея Карточек":
                             new_node_row['Имя / Название персонажа'] = resolved_link
                             new_node_row['Категория плана'] = '1 план'
                             if 'Группировка' in new_node_row:
-                                new_node_row['Группировка'] = c_fac.strip() or "Не указано"
+                                new_node_row['Группировка'] = clean_fac_val
                             if 'Амплуа' in new_node_row:
                                 new_node_row['Амплуа'] = c_align
                             if 'Заметки' in new_node_row:
@@ -1927,70 +1957,117 @@ elif app_mode == "🃏 Галерея Карточек":
 
 
 # ==============================================================================
-# МОДУЛЬ 3: ФРАКЦИИ И ОРГАНИЗАЦИИ (ГЕРБЫ, ДЕВИЗЫ, ВЛИЯНИЕ И АВТО-ПОДСЧЕТ)
+# МОДУЛЬ 3: ФРАКЦИИ, КЛАНЫ И ОРГАНИЗАЦИИ (СИНХРОНИЗАЦИЯ СО СТОЛБЦАМИ ГРАФА)
 # ==============================================================================
 elif app_mode == "🏛 Фракции и Организации":
     st.title("🏛 Фракции, Кланы и Организации БИГ СИТИ")
     df_fac = st.session_state['factions'].copy()
-    all_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
+    if 'Org_Category' not in df_fac.columns:
+        df_fac['Org_Category'] = "Группировка"
 
-    with st.expander("➕ Создать или отредактировать фракцию", expanded=df_fac.empty):
-        fac_edit = st.selectbox("Выберите фракцию:", ["Создать новую фракцию"] + df_fac['Name'].tolist())
-        if fac_edit == "Создать новую фракцию":
-            f_name, f_motto, f_leader, f_ideo, f_base, f_inf, f_col, f_desc, f_logo, f_allies, f_enemies = (
-                "", "", "Не указано", "", "", 50, "#00d4ff", "", "", "", ""
+    all_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
+    graph_custom_cols = [c for c in st.session_state['nodes'].columns if c not in ["Имя / Название персонажа", "Заметки"]]
+
+    with st.expander("➕ Создать или отредактировать фракцию / клан / организацию", expanded=df_fac.empty):
+        fac_edit = st.selectbox("Выберите организацию:", ["Создать новую запись"] + df_fac['Name'].tolist())
+        if fac_edit == "Создать новую запись":
+            f_name, f_cat, f_motto, f_leader, f_ideo, f_base, f_inf, f_col, f_desc, f_logo, f_allies, f_enemies = (
+                "", "Группировка", "", "Не указано", "", "", 50, "#00d4ff", "", "", "", ""
             )
         else:
             fr = df_fac[df_fac['Name'] == fac_edit].iloc[0]
-            f_name, f_motto, f_leader, f_ideo, f_base = str(fr['Name']), str(fr['Motto']), str(fr['Leader']), str(fr['Ideology']), str(fr['Base_Location'])
+            f_name = str(fr['Name'])
+            f_cat = str(fr.get('Org_Category', 'Группировка')) or "Группировка"
+            f_motto, f_leader, f_ideo, f_base = str(fr['Motto']), str(fr['Leader']), str(fr['Ideology']), str(fr['Base_Location'])
             f_inf = int(fr['Influence'])
             f_col = str(fr['Color']) if str(fr['Color']).startswith('#') else "#00d4ff"
             f_desc, f_logo, f_allies, f_enemies = str(fr['Description']), str(fr['Logo_Data']), str(fr['Allies']), str(fr['Enemies'])
 
         fc1, fc2 = st.columns(2)
         with fc1:
-            inp_fname = st.text_input("Название фракции / организации:", value=f_name)
+            inp_fname = st.text_input("Название (например: Клан Красного Лотоса):", value=f_name)
+            
+            base_cat_opts = sorted(list(set(["Группировка", "Фракция", "Клан", "Организация"] + graph_custom_cols)))
+            if f_cat not in base_cat_opts:
+                base_cat_opts.append(f_cat)
+            sel_cat = st.selectbox(
+                "🗂 Категория (В какой столбец таблицы Графа добавить):",
+                base_cat_opts + ["➕ Создать новый столбец в таблице Графа..."],
+                index=base_cat_opts.index(f_cat)
+            )
+            if sel_cat == "➕ Создать новый столбец в таблице Графа...":
+                inp_fcat = st.text_input("Название нового столбца (напр. Клан, Орден, Корпорация):", value="Клан").strip()
+            else:
+                inp_fcat = sel_cat
+
             inp_fmotto = st.text_input("Девиз / Слоган:", value=f_motto)
             leader_opts = ["Не указано"] + all_chars
             l_idx = leader_opts.index(f_leader) if f_leader in leader_opts else 0
             inp_fleader = st.selectbox("Лидер / Глава:", leader_opts, index=l_idx)
             inp_fideo = st.text_input("Идеология / Направленность:", value=f_ideo)
             inp_fbase = st.text_input("Штаб-квартира / Главная база:", value=f_base)
+
         with fc2:
             inp_finf = st.slider("📊 Индекс влияния в городе (0 - 100):", 0, 100, f_inf)
-            inp_fcol = st.color_picker("Фирменный цвет фракции:", f_col)
-            inp_fallies = st.text_input("🤝 Союзные фракции (через запятую):", value=f_allies)
-            inp_fenemies = st.text_input("⚔️ Враждебные фракции (через запятую):", value=f_enemies)
+            inp_fcol = st.color_picker("🎨 Фирменный цвет (также раскрасит узлы на Графе!):", f_col)
+            inp_fallies = st.text_input("🤝 Союзники (через запятую):", value=f_allies)
+            inp_fenemies = st.text_input("⚔️ Враги (через запятую):", value=f_enemies)
             up_logo = st.file_uploader("🛡 Загрузить герб / логотип:", type=["png", "jpg", "jpeg", "webp"], key="fac_logo_up")
 
         inp_fdesc = st.text_area("История, структура и цели организации (имена героев подсвечиваются):", value=f_desc, height=110)
 
         fb1, fb2 = st.columns([3, 1])
         with fb1:
-            if st.button("💾 Сохранить фракцию", type="primary", use_container_width=True):
-                if inp_fname.strip():
+            if st.button("💾 Сохранить и синхронизировать с таблицей Графа", type="primary", use_container_width=True):
+                if inp_fname.strip() and inp_fcat.strip():
+                    clean_fname = inp_fname.strip()
+                    clean_fcat = inp_fcat.strip()
                     final_logo = compress_uploaded_image(up_logo, max_size=(300, 300)) if up_logo is not None else f_logo
+                    
                     new_f_row = {
-                        "Name": inp_fname.strip(), "Motto": inp_fmotto.strip(), "Leader": inp_fleader,
-                        "Ideology": inp_fideo.strip(), "Base_Location": inp_fbase.strip(),
+                        "Name": clean_fname, "Org_Category": clean_fcat, "Motto": inp_fmotto.strip(),
+                        "Leader": inp_fleader, "Ideology": inp_fideo.strip(), "Base_Location": inp_fbase.strip(),
                         "Influence": int(inp_finf), "Color": inp_fcol, "Description": inp_fdesc.strip(),
                         "Logo_Data": final_logo, "Allies": inp_fallies.strip(), "Enemies": inp_fenemies.strip()
                     }
+                    
+                    for col_req in FAC_COLS:
+                        if col_req not in st.session_state['factions'].columns:
+                            st.session_state['factions'][col_req] = ""
                     base_f = st.session_state['factions'][FAC_COLS]
-                    if fac_edit == "Создать новую фракцию":
+                    
+                    if fac_edit == "Создать новую запись":
                         st.session_state['factions'] = pd.concat([base_f, pd.DataFrame([new_f_row])], ignore_index=True)
                     else:
                         idx_f = base_f[base_f['Name'] == fac_edit].index[0]
                         for k, v in new_f_row.items():
                             st.session_state['factions'].at[idx_f, k] = v
+                        if fac_edit != clean_fname:
+                            if clean_fcat in st.session_state['nodes'].columns:
+                                st.session_state['nodes'][clean_fcat] = st.session_state['nodes'][clean_fcat].replace(fac_edit, clean_fname)
+                                save_sheet("Nodes", st.session_state['nodes'])
+                            st.session_state['cards']['Faction'] = st.session_state['cards']['Faction'].replace(fac_edit, clean_fname)
+                            save_sheet("Cards", st.session_state['cards'][CARD_COLS])
+
                     save_sheet("Factions", st.session_state['factions'][FAC_COLS])
-                    st.success(f"Фракция «{inp_fname.strip()}» сохранена!")
+
+                    if clean_fcat not in st.session_state['nodes'].columns:
+                        st.session_state['nodes'][clean_fcat] = "Не указано"
+                        save_sheet("Nodes", st.session_state['nodes'])
+
+                    opts_list = st.session_state['config']['options'].setdefault(clean_fcat, [])
+                    if clean_fname not in opts_list:
+                        opts_list.append(clean_fname)
+                    st.session_state['config']['colors'].setdefault(clean_fcat, {})[clean_fname] = inp_fcol
+                    save_config_to_cloud(st.session_state['config'])
+
+                    st.success(f"«{clean_fname}» сохранена и добавлена в выпадающий список столбца «{clean_fcat}» в таблице персонажей!")
                     st.rerun()
                 else:
-                    st.warning("Введите название фракции!")
+                    st.warning("Введите название организации и категорию столбца!")
         with fb2:
-            if fac_edit != "Создать новую фракцию":
-                if st.button("🗑 Удалить фракцию", use_container_width=True):
+            if fac_edit != "Создать новую запись":
+                if st.button("🗑 Удалить организацию", use_container_width=True):
                     st.session_state['factions'] = df_fac[df_fac['Name'] != fac_edit].reset_index(drop=True)
                     save_sheet("Factions", st.session_state['factions'][FAC_COLS])
                     st.rerun()
@@ -2009,15 +2086,25 @@ elif app_mode == "🏛 Фракции и Организации":
         f_cols = st.columns(2)
         for idx_f, (_, f_row) in enumerate(df_fac.iterrows()):
             f_title = str(f_row['Name']).strip()
-            # Авто-подсчет участников из Nodes и Cards и локаций из Locations
+            f_cat_col = str(f_row.get('Org_Category', 'Группировка')).strip() or "Группировка"
+
             nodes_in_fac = []
-            if 'Группировка' in st.session_state['nodes'].columns:
-                nodes_in_fac = st.session_state['nodes'][
-                    st.session_state['nodes']['Группировка'].astype(str).str.strip().str.lower() == f_title.lower()
-                ]['Имя / Название персонажа'].tolist()
+            check_cols = list(set([f_cat_col, 'Группировка'] + [c for c in st.session_state['nodes'].columns if c not in ['Имя / Название персонажа', 'Заметки']]))
+            for c_col in check_cols:
+                if c_col in st.session_state['nodes'].columns:
+                    matched_chars = st.session_state['nodes'][
+                        st.session_state['nodes'][c_col].astype(str).str.strip().str.lower() == f_title.lower()
+                    ]['Имя / Название персонажа'].tolist()
+                    nodes_in_fac.extend(matched_chars)
+
             cards_in_fac = st.session_state['cards'][
                 st.session_state['cards']['Faction'].astype(str).str.strip().str.lower() == f_title.lower()
             ]['Name'].tolist()
+            
+            leader_name = str(f_row.get('Leader', '')).strip()
+            if leader_name and leader_name != "Не указано":
+                nodes_in_fac.append(leader_name)
+
             all_members = sorted(list(set(nodes_in_fac + cards_in_fac)))
 
             locs_in_fac = st.session_state['locations'][
@@ -2029,7 +2116,7 @@ elif app_mode == "🏛 Фракции и Организации":
                 <div class="game-card" style="border-top: 4px solid {html.escape(str(f_row['Color']))};">
                     <div class="game-card-header">
                         <span style="color:{html.escape(str(f_row['Color']))}; font-weight:bold;">ВЛИЯНИЕ: {int(f_row['Influence'])} / 100</span>
-                        <span class="game-card-type">{html.escape(str(f_row['Ideology'] or 'Организация'))}</span>
+                        <span class="game-card-type">Столбец: {html.escape(f_cat_col)} • {html.escape(str(f_row['Ideology'] or 'Организация'))}</span>
                     </div>
                     <div class="game-card-title">{html.escape(f_title)}</div>
                     <div style="font-style:italic; color:#ffcc00; font-size:13px; margin-bottom:8px;">«{html.escape(str(f_row['Motto']))}»</div>
@@ -2061,7 +2148,6 @@ elif app_mode == "🗺 Карта Местности":
     all_scripts = st.session_state['scripts']['Title'].dropna().unique().tolist()
     all_factions = ["Нейтральная территория"] + st.session_state['factions']['Name'].dropna().unique().tolist()
 
-    # Инициализация состояния клика и выбранного объекта на карте
     if 'map_clicked_x' not in st.session_state:
         st.session_state['map_clicked_x'] = 50.0
     if 'map_clicked_y' not in st.session_state:
@@ -2069,7 +2155,6 @@ elif app_mode == "🗺 Карта Местности":
     if 'map_selected_item' not in st.session_state:
         st.session_state['map_selected_item'] = "➕ Создать в точке прицела 🎯"
 
-    # --- 1. ВЫБОР РЕГИОНА И ЗАГРУЗКА КАРТИНКИ ФОНА ---
     existing_regions = sorted(list(set(["Глобальная карта (БИГ СИТИ)"] + [r for r in df_loc['Region'].unique().tolist() if str(r).strip()])))
     col_reg1, col_reg2 = st.columns([2, 1.2])
     with col_reg1:
@@ -2103,15 +2188,12 @@ elif app_mode == "🗺 Карта Местности":
 
     st.info("👆 **Управление:** Кликните в пустое место карты, чтобы поставить **прицел 🎯**, ИЛИ кликните прямо по **существующему маркеру** на карте, чтобы изменить или удалить его!")
 
-    # --- 2. РАЗДЕЛЕНИЕ ЭКРАНА: СЛЕВА КАРТА С КЛИКОМ, СПРАВА ПАНЕЛЬ УПРАВЛЕНИЯ ---
     map_col, form_col = st.columns([1.85, 1.15])
-
     reg_df = df_loc[df_loc['Region'] == active_region].copy()
 
     with map_col:
         fig_map = go.Figure()
 
-        # А) Накладываем картинку карты на оси (от 0 до 100 по X и Y)
         bg_map_data = st.session_state['config'].get('region_maps', {}).get(active_region)
         if bg_map_data:
             fig_map.add_layout_image(
@@ -2126,7 +2208,6 @@ elif app_mode == "🗺 Карта Местности":
                 )
             )
 
-        # Б) Невидимая сетка для перехвата клика мыши в любой точке картинки (шаг 2)
         grid_x, grid_y = [], []
         for gx in range(0, 102, 2):
             for gy in range(0, 102, 2):
@@ -2144,7 +2225,6 @@ elif app_mode == "🗺 Карта Местности":
             hovertemplate="🎯 Кликните для выбора координат: X=%{x}, Y=%{y}<extra></extra>"
         ))
 
-        # В) Отрисовка уже размещенных объектов и персонажей на карте
         if not reg_df.empty:
             type_style_map = {
                 "👤 Персонаж на карте": ("circle", "#00d4ff", 18),
@@ -2176,7 +2256,6 @@ elif app_mode == "🗺 Карта Местности":
                     )
                 ))
 
-        # Г) Золотой прицел в точке последнего клика мыши
         fig_map.add_trace(go.Scatter(
             x=[st.session_state['map_clicked_x']],
             y=[st.session_state['map_clicked_y']],
@@ -2211,13 +2290,11 @@ elif app_mode == "🗺 Карта Местности":
             key=f"interactive_map_{active_region}"
         )
 
-        # Обработка клика по карте (либо по сетке, либо прямо по существующему объекту/персонажу)
         if map_event and "selection" in map_event and map_event["selection"].get("points"):
             pt = map_event["selection"]["points"][0]
             new_x = float(pt.get("x", st.session_state['map_clicked_x']))
             new_y = float(pt.get("y", st.session_state['map_clicked_y']))
 
-            # Проверяем, попали ли мы в существующий маркер
             clicked_item_name = None
             if not reg_df.empty:
                 matched = reg_df[(reg_df['X'] == new_x) & (reg_df['Y'] == new_y)]
@@ -2234,7 +2311,6 @@ elif app_mode == "🗺 Карта Местности":
                     st.session_state['map_selected_item'] = clicked_item_name
                 st.rerun()
 
-    # --- 3. ПРАВАЯ ПАНЕЛЬ: РАЗМЕЩЕНИЕ, РЕДАКТИРОВАНИЕ И УДАЛЕНИЕ ---
     with form_col:
         st.subheader("🎯 Панель управления точкой")
         st.markdown(f"**Координаты прицела:** `X = {st.session_state['map_clicked_x']}` | `Y = {st.session_state['map_clicked_y']}`")
@@ -2373,7 +2449,6 @@ elif app_mode == "🗺 Карта Местности":
                         st.success(f"«{loc_edit}» удален с карты!")
                         st.rerun()
 
-    # --- 4. СПИСОК ВСЕХ ТОЧЕК И ПЕРСОНАЖЕЙ НА КАРТЕ С БЫСТРЫМ УДАЛЕНИЕМ В 1 КЛИК ---
     st.write("---")
     tab_loc_cards, tab_loc_table = st.tabs([
         f"📍 Все объекты и персонажи региона «{active_region}» ({len(reg_df)})",
@@ -2436,6 +2511,8 @@ elif app_mode == "🗺 Карта Местности":
             save_sheet("Locations", clean_locs[LOC_COLS])
             st.success("Таблица локаций синхронизирована с облаком!")
             st.rerun()
+
+
 # ==============================================================================
 # МОДУЛЬ 5: ХРОНОЛОГИЯ ВСЕЛЕННОЙ (TIMELINE ПО ЭПОХАМ И ИНДЕКСАМ)
 # ==============================================================================
@@ -2518,7 +2595,6 @@ elif app_mode == "⏳ Хронология Вселенной":
         if sel_era != "Все эпохи":
             view_time = view_time[view_time['Era'] == sel_era]
 
-        # Визуальная шкала времени
         fig_tl = go.Figure()
         fig_tl.add_hline(y=0, line_width=3, line_color="#00d4ff")
         for era_name, grp in view_time.groupby('Era', sort=False):
@@ -2562,7 +2638,7 @@ elif app_mode == "⏳ Хронология Вселенной":
             if meta_t:
                 st.caption(" | ".join(meta_t))
             if t_row['Description']:
-                hl_tdesc, t_found = render_text_with_spoilers_and_characters(
+                hl_tdesc, _ = render_text_with_spoilers_and_characters(
                     str(t_row['Description']), CHAR_MATCHERS, CHAR_POPUP_SPANS, enable_spoilers=False
                 )
                 st.markdown(f"<div class='script-body'>{hl_tdesc}</div>", unsafe_allow_html=True)
