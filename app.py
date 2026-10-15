@@ -9,6 +9,7 @@ import base64
 from io import BytesIO
 from PIL import Image
 import html
+import docx
 
 # --- НАСТРОЙКИ СТРАНИЦЫ ---
 st.set_page_config(layout="wide", page_title="БИГ СИТИ: Экосистема Вселенной", initial_sidebar_state="expanded")
@@ -17,10 +18,10 @@ st.set_page_config(layout="wide", page_title="БИГ СИТИ: Экосисте�
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1MyQ3vqstgSAarY9NtsAl1f1tnlbgmi-2iljHMf97zBM/edit?gid=0#gid=0"
 
 if SHEET_URL == "ВСТАВЬТЕ_ССЫЛКУ_СЮДА":
-    st.error("⚠️ Откройте код app.py на GitHub и вставьте настоящую ссылку на вашу Google Таблицу в переменную SHEET_URL (строка 18).")
+    st.error("⚠️ Откройте код app.py на GitHub и вставьте настоящую ссылку на вашу Google Таблицу в переменную SHEET_URL (строка 19).")
     st.stop()
 
-# --- КАСТОМНЫЙ ДИЗАЙН И СТИЛИ ДЛЯ СКРЫТЫХ ЗАГОЛОВКОВ ---
+# --- КАСТОМНЫЙ ДИЗАЙН И СТИЛИ КАРТОЧЕК ---
 st.markdown("""
 <style>
     [data-testid="stAppViewContainer"] { background-color: #121212; }
@@ -31,66 +32,56 @@ st.markdown("""
     
     /* Стили для карточек галереи */
     .game-card {
-        background-color: #1e1e2a;
+        background-color: #1b1b26;
         border: 1px solid #33334d;
         border-radius: 12px;
-        padding: 15px;
-        margin-bottom: 15px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+        padding: 14px;
+        margin-bottom: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
     }
-    .game-card-title { color: #00d4ff; font-size: 20px; font-weight: bold; margin-bottom: 5px; }
-    .game-card-faction { color: #ffcc00; font-size: 13px; text-transform: uppercase; margin-bottom: 8px; }
-    .game-card-stats { background-color: #2b2b3d; padding: 6px 10px; border-radius: 6px; font-size: 13px; color: #ffffff; margin-bottom: 10px; font-family: monospace; }
+    .game-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .game-card-type { font-size: 11px; padding: 2px 8px; border-radius: 4px; background-color: #2b2b3d; color: #00d4ff; text-transform: uppercase; font-weight: bold; }
+    .game-card-title { color: #ffffff; font-size: 22px; font-weight: bold; font-family: 'Courier New', monospace; letter-spacing: 1px; margin-bottom: 6px; }
+    
+    /* Сетка показателей С, Л, М, С */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        background-color: #232334;
+        padding: 8px 10px;
+        border-radius: 8px;
+        margin: 8px 0;
+        font-family: 'Courier New', monospace;
+        font-size: 14px;
+        border-left: 3px solid #00d4ff;
+    }
+    .stat-item { color: #e0e0e0; }
+    .stat-letter { color: #00d4ff; font-weight: bold; margin-right: 4px; }
+    
+    /* Плашка класса снизу карточки */
+    .alignment-badge {
+        text-align: center;
+        padding: 5px;
+        border-radius: 6px;
+        font-weight: bold;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-top: 8px;
+    }
+    .align-hero { background-color: rgba(77, 166, 255, 0.2); color: #4da6ff; border: 1px solid #4da6ff; }
+    .align-villain { background-color: rgba(255, 77, 77, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
+    .align-neutral { background-color: rgba(255, 204, 0, 0.2); color: #ffcc00; border: 1px solid #ffcc00; }
     
     /* Стили для скрытых заголовков и подзаголовков в Сценариях */
-    details.lvl1 {
-        background-color: #1b1b26;
-        border-left: 4px solid #00d4ff;
-        border-radius: 6px;
-        padding: 10px 15px;
-        margin: 12px 0;
-    }
-    details.lvl1 > summary {
-        font-size: 20px;
-        font-weight: bold;
-        color: #00d4ff;
-        cursor: pointer;
-        outline: none;
-    }
-    details.lvl2 {
-        background-color: #232332;
-        border-left: 3px solid #ffcc00;
-        border-radius: 6px;
-        padding: 8px 14px;
-        margin: 10px 0 10px 15px;
-    }
-    details.lvl2 > summary {
-        font-size: 17px;
-        font-weight: bold;
-        color: #ffcc00;
-        cursor: pointer;
-        outline: none;
-    }
-    details.lvl3 {
-        background-color: #2b2b3c;
-        border-left: 3px solid #ff66b2;
-        border-radius: 6px;
-        padding: 6px 12px;
-        margin: 8px 0 8px 25px;
-    }
-    details.lvl3 > summary {
-        font-size: 15px;
-        font-weight: bold;
-        color: #ff66b2;
-        cursor: pointer;
-        outline: none;
-    }
-    .script-body {
-        padding-top: 8px;
-        color: #e0e0e0;
-        line-height: 1.6;
-        white-space: pre-wrap;
-    }
+    details.lvl1 { background-color: #1b1b26; border-left: 4px solid #00d4ff; border-radius: 6px; padding: 10px 15px; margin: 12px 0; }
+    details.lvl1 > summary { font-size: 20px; font-weight: bold; color: #00d4ff; cursor: pointer; outline: none; }
+    details.lvl2 { background-color: #232332; border-left: 3px solid #ffcc00; border-radius: 6px; padding: 8px 14px; margin: 10px 0 10px 15px; }
+    details.lvl2 > summary { font-size: 17px; font-weight: bold; color: #ffcc00; cursor: pointer; outline: none; }
+    details.lvl3 { background-color: #2b2b3c; border-left: 3px solid #ff66b2; border-radius: 6px; padding: 6px 12px; margin: 8px 0 8px 25px; }
+    details.lvl3 > summary { font-size: 15px; font-weight: bold; color: #ff66b2; cursor: pointer; outline: none; }
+    .script-body { padding-top: 8px; color: #e0e0e0; line-height: 1.6; white-space: pre-wrap; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -98,6 +89,8 @@ PALETTE = ["#ff4d4d", "#4da6ff", "#9933ff", "#33cc33", "#ffcc00", "#ff66b2", "#3
 
 # --- ПОДКЛЮЧЕНИЕ К GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
+
+CARD_COLS = ['Name', 'Card_Type', 'Alignment', 'Faction', 'Strength', 'Agility', 'Mastery', 'Wit', 'Description', 'Image_Data']
 
 def safe_read_sheet(worksheet_name, default_cols):
     try:
@@ -107,18 +100,28 @@ def safe_read_sheet(worksheet_name, default_cols):
             return pd.DataFrame(columns=default_cols)
         for col in default_cols:
             if col not in df.columns:
-                df[col] = "Не указано" if col not in ["Content", "Image_Data", "Заметки"] else ""
+                if col in ['Strength', 'Agility', 'Mastery', 'Wit']:
+                    df[col] = 0
+                elif col == 'Card_Type':
+                    df[col] = 'Персонаж'
+                elif col == 'Alignment':
+                    df[col] = 'Нейтралитет'
+                elif col in ["Content", "Image_Data", "Заметки", "Description"]:
+                    df[col] = ""
+                else:
+                    df[col] = "Не указано"
         return df.fillna("")
     except Exception:
         return pd.DataFrame(columns=default_cols)
 
 @st.cache_data(ttl=5)
 def load_all_data():
-    nodes = safe_read_sheet("Nodes", ['Имя / Название персонажа', 'Категория плана', 'Пол', 'Группировка', 'Заметки'])
-    nodes = nodes.replace("", "Не указано")
+    nodes = safe_read_sheet("Nodes", ['Имя / Название персонажа', 'Категория плана', 'Пол', 'Группировка', 'Заметки']).replace("", "Не указано")
     edges = safe_read_sheet("Edges", ['Source', 'Target', 'Weight', 'Type'])
     archives = safe_read_sheet("Archives", ['Title', 'Category', 'Content'])
-    cards = safe_read_sheet("Cards", ['Name', 'Faction', 'Stats', 'Description', 'Image_Data'])
+    cards = safe_read_sheet("Cards", CARD_COLS)
+    for stat_col in ['Strength', 'Agility', 'Mastery', 'Wit']:
+        cards[stat_col] = pd.to_numeric(cards[stat_col], errors='coerce').fillna(0).astype(int)
     scripts = safe_read_sheet("Scripts", ['Title', 'Act', 'Status', 'Content'])
     return nodes, edges, archives, cards, scripts
 
@@ -139,28 +142,58 @@ def save_sheet(worksheet_name, df):
         conn.update(spreadsheet=SHEET_URL, worksheet=worksheet_name, data=df)
         st.cache_data.clear()
     except Exception as e:
-        st.error(f"⚠️ Ошибка сохранения в лист '{worksheet_name}'. Убедитесь, что вы создали лист с таким названием внизу Google Таблицы! Детали: {e}")
+        st.error(f"⚠️ Ошибка сохранения в лист '{worksheet_name}'. Проверьте наличие листа в таблице! Детали: {e}")
 
 def save_config_to_cloud(config_dict):
     df = pd.DataFrame({"Settings": [json.dumps(config_dict, ensure_ascii=False)]})
     save_sheet("Config", df)
 
-# --- ФУНКЦИЯ СЖАТИЯ ФОТО КАРТОЧЕК (ДЛЯ ХРАНЕНИЯ В ОБЛАКЕ) ---
+# --- ЧТЕНИЕ ФАЙЛОВ С КОМПЬЮТЕРА (.DOCX, .TXT, .MD) ---
+def read_uploaded_document(uploaded_file):
+    filename = uploaded_file.name
+    base_title = filename.rsplit('.', 1)[0]
+    if filename.lower().endswith('.docx'):
+        doc = docx.Document(uploaded_file)
+        lines = []
+        for p in doc.paragraphs:
+            text = p.text.strip()
+            if not text:
+                lines.append("")
+                continue
+            style_name = p.style.name.lower() if p.style else ""
+            if 'heading 1' in style_name or 'заголовок 1' in style_name:
+                lines.append(f"# {text}")
+            elif 'heading 2' in style_name or 'заголовок 2' in style_name:
+                lines.append(f"## {text}")
+            elif 'heading 3' in style_name or 'заголовок 3' in style_name:
+                lines.append(f"### {text}")
+            else:
+                lines.append(p.text)
+        return base_title, "\n".join(lines)
+    else:
+        raw_bytes = uploaded_file.read()
+        try:
+            content = raw_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            content = raw_bytes.decode('cp1251', errors='replace')
+        return base_title, content
+
+# --- СЖАТИЕ ФОТО КАРТОЧЕК ---
 def compress_uploaded_image(uploaded_file):
     img = Image.open(uploaded_file)
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
-    img.thumbnail((420, 580)) # Оптимальный размер карточки
+    img.thumbnail((420, 580))
     buffer = BytesIO()
     img.save(buffer, format="JPEG", quality=72, optimize=True)
     b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
     return f"data:image/jpeg;base64,{b64_str}"
 
-# --- ФУНКЦИЯ ПАРСИНГА СКРЫТЫХ ЗАГОЛОВКОВ И ПОДЗАГОЛОВКОВ ---
+# --- ПАРСИНГ СКРЫТЫХ ЗАГОЛОВКОВ И ПОДЗАГОЛОВКОВ ---
 def render_script_with_spoilers(raw_text):
     lines = raw_text.split('\n')
     html_out = []
-    open_levels = [] # стек открытых уровней [1, 2, 3]
+    open_levels = []
 
     def close_until(target_level):
         while open_levels and open_levels[-1] >= target_level:
@@ -185,8 +218,7 @@ def render_script_with_spoilers(raw_text):
             html_out.append(f'<details class="lvl1"><summary>📁 {title}</summary><div class="script-body">')
             open_levels.append(1)
         else:
-            safe_line = html.escape(line)
-            html_out.append(safe_line + "<br>")
+            html_out.append(html.escape(line) + "<br>")
 
     close_until(1)
     return "".join(html_out)
@@ -211,8 +243,8 @@ app_mode = st.sidebar.radio(
     "Навигация по экосистеме:",
     [
         "🌐 Персонажи и Граф",
-        "📚 Архивы и Лор",
         "🃏 Галерея Карточек",
+        "📚 Архивы и Лор",
         "🎬 Сценарии и Сюжет"
     ]
 )
@@ -417,7 +449,251 @@ if app_mode == "🌐 Персонажи и Граф":
 
 
 # ==============================================================================
-# МОДУЛЬ 2: АРХИВЫ И ЛОР (БИБЛИОТЕКА ДОКУМЕНТОВ)
+# МОДУЛЬ 2: ГАЛЕРЕЯ КАРТОЧЕК И БАЛАНС КОЛОДЫ
+# ==============================================================================
+elif app_mode == "🃏 Галерея Карточек":
+    st.title("🃏 Игровые Карточки БИГ СИТИ")
+    df_cards = st.session_state['cards'].copy()
+    for s_col in ['Strength', 'Agility', 'Mastery', 'Wit']:
+        df_cards[s_col] = pd.to_numeric(df_cards[s_col], errors='coerce').fillna(0).astype(int)
+    df_cards['Total_Power'] = df_cards['Strength'] + df_cards['Agility'] + df_cards['Mastery'] + df_cards['Wit']
+
+    tab_gallery, tab_card_stats = st.tabs(["🃏 Коллекция и Конструктор", "📊 Статистика и Баланс Карточек"])
+
+    with tab_gallery:
+        with st.expander("➕ Добавить или отредактировать карточку", expanded=df_cards.empty):
+            edit_mode = st.selectbox("Выберите карточку для редактирования или создайте новую:", ["Создать новую карточку"] + df_cards['Name'].tolist())
+            
+            if edit_mode == "Создать новую карточку":
+                c_name_val, c_type_val, c_align_val, c_fac_val, c_desc_val, c_img_val = "", "Персонаж", "Нейтралитет", "", "", ""
+                s_str, s_agi, s_mas, s_wit = 8000, 8000, 8000, 8000
+            else:
+                row_c = df_cards[df_cards['Name'] == edit_mode].iloc[0]
+                c_name_val = str(row_c['Name'])
+                c_type_val = str(row_c['Card_Type']) if row_c['Card_Type'] in ["Персонаж", "Бонус"] else "Персонаж"
+                c_align_val = str(row_c['Alignment']) if row_c['Alignment'] in ["Герой", "Злодей", "Нейтралитет"] else "Нейтралитет"
+                c_fac_val = str(row_c['Faction'])
+                c_desc_val = str(row_c['Description'])
+                c_img_val = str(row_c['Image_Data'])
+                s_str, s_agi, s_mas, s_wit = int(row_c['Strength']), int(row_c['Agility']), int(row_c['Mastery']), int(row_c['Wit'])
+
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                c_name = st.text_input("Имя / Название карточки (напр. ТЕР РОТ):", value=c_name_val)
+                tc1, tc2 = st.columns(2)
+                with tc1:
+                    type_opts = ["Персонаж", "Бонус"]
+                    c_type = st.selectbox("Категория карточки:", type_opts, index=type_opts.index(c_type_val))
+                with tc2:
+                    align_opts = ["Герой", "Злодей", "Нейтралитет"]
+                    c_align = st.selectbox("Класс (снизу карточки):", align_opts, index=align_opts.index(c_align_val))
+                c_fac = st.text_input("Фракция / Принадлежность:", value=c_fac_val)
+
+            with col_f2:
+                st.markdown("**Показатели карточки (или прибавка от бонуса):**")
+                st1, st2 = st.columns(2)
+                with st1:
+                    val_str = st.number_input("💪 Сила (С):", value=s_str, step=10)
+                    val_mas = st.number_input("🛠 Мастерство (М):", value=s_mas, step=10)
+                with st2:
+                    val_agi = st.number_input("⚡ Ловкость (Л):", value=s_agi, step=10)
+                    val_wit = st.number_input("🧠 Смекалка (С):", value=s_wit, step=10)
+
+            img_col1, img_col2 = st.columns(2)
+            with img_col1:
+                uploaded_img = st.file_uploader("📸 Загрузить фото карточки (с телефона или ПК):", type=["png", "jpg", "jpeg", "webp"])
+            with img_col2:
+                c_url = st.text_input("ИЛИ прямая ссылка на изображение:", value="" if c_img_val.startswith("data:image") else c_img_val)
+
+            c_desc = st.text_area("Описание бонуса / Особое свойство / Лор:", value=c_desc_val, height=80)
+
+            btn_c1, btn_c2 = st.columns([3, 1])
+            with btn_c1:
+                if st.button("💾 Сохранить карточку в базу", type="primary", use_container_width=True):
+                    if c_name.strip():
+                        final_img = c_img_val
+                        if uploaded_img is not None:
+                            final_img = compress_uploaded_image(uploaded_img)
+                        elif c_url.strip():
+                            final_img = c_url.strip()
+
+                        new_card_data = {
+                            "Name": c_name.strip(),
+                            "Card_Type": c_type,
+                            "Alignment": c_align,
+                            "Faction": c_fac.strip() or "Общие",
+                            "Strength": int(val_str),
+                            "Agility": int(val_agi),
+                            "Mastery": int(val_mas),
+                            "Wit": int(val_wit),
+                            "Description": c_desc.strip(),
+                            "Image_Data": final_img
+                        }
+
+                        base_df = st.session_state['cards'][CARD_COLS]
+                        if edit_mode == "Создать новую карточку":
+                            st.session_state['cards'] = pd.concat([base_df, pd.DataFrame([new_card_data])], ignore_index=True)
+                        else:
+                            idx = base_df[base_df['Name'] == edit_mode].index[0]
+                            for k, v in new_card_data.items():
+                                st.session_state['cards'].at[idx, k] = v
+
+                        save_sheet("Cards", st.session_state['cards'][CARD_COLS])
+                        st.success(f"Карточка «{c_name.strip()}» сохранена!")
+                        st.rerun()
+                    else:
+                        st.warning("Укажите название карточки!")
+            with btn_c2:
+                if edit_mode != "Создать новую карточку":
+                    if st.button("🗑 Удалить карточку", use_container_width=True):
+                        st.session_state['cards'] = st.session_state['cards'][st.session_state['cards']['Name'] != edit_mode].reset_index(drop=True)
+                        save_sheet("Cards", st.session_state['cards'][CARD_COLS])
+                        st.rerun()
+
+        st.write("---")
+
+        # --- ПАНЕЛЬ ФАСОВКИ И СОРТИРОВКИ КАРТОЧЕК ---
+        if not df_cards.empty:
+            f1, f2, f3, f4 = st.columns(4)
+            with f1:
+                filter_type = st.selectbox("Тип карточки:", ["Все", "Персонаж", "Бонус"])
+            with f2:
+                filter_align = st.selectbox("Класс:", ["Все", "Герой", "Злодей", "Нейтралитет"])
+            with f3:
+                factions = ["Все"] + sorted([f for f in df_cards['Faction'].unique().tolist() if f])
+                filter_fac = st.selectbox("Фракция:", factions)
+            with f4:
+                sort_by = st.selectbox("Сортировать по:", [
+                    "По порядку добавления",
+                    "Общая мощь (по убыванию)",
+                    "Сила (по убыванию)",
+                    "Ловкость (по убыванию)",
+                    "Мастерство (по убыванию)",
+                    "Смекалка (по убыванию)",
+                    "По алфавиту (А-Я)"
+                ])
+
+            search_q = st.text_input("🔍 Быстрый поиск по имени карточки или тексту эффекта:")
+
+            view_cards = df_cards.copy()
+            if filter_type != "Все":
+                view_cards = view_cards[view_cards['Card_Type'] == filter_type]
+            if filter_align != "Все":
+                view_cards = view_cards[view_cards['Alignment'] == filter_align]
+            if filter_fac != "Все":
+                view_cards = view_cards[view_cards['Faction'] == filter_fac]
+            if search_q.strip():
+                q = search_q.strip().lower()
+                view_cards = view_cards[view_cards['Name'].str.lower().str.contains(q) | view_cards['Description'].str.lower().str.contains(q)]
+
+            sort_map = {
+                "Общая мощь (по убыванию)": ("Total_Power", False),
+                "Сила (по убыванию)": ("Strength", False),
+                "Ловкость (по убыванию)": ("Agility", False),
+                "Мастерство (по убыванию)": ("Mastery", False),
+                "Смекалка (по убыванию)": ("Wit", False),
+                "По алфавиту (А-Я)": ("Name", True)
+            }
+            if sort_by in sort_map:
+                col_s, asc = sort_map[sort_by]
+                view_cards = view_cards.sort_values(by=col_s, ascending=asc)
+
+            st.caption(f"Найдено карточек: **{len(view_cards)}**")
+            cols = st.columns(3)
+            for i, (_, card) in enumerate(view_cards.iterrows()):
+                with cols[i % 3]:
+                    align_str = str(card['Alignment'])
+                    align_class = "align-hero" if align_str == "Герой" else ("align-villain" if align_str == "Злодей" else "align-neutral")
+                    
+                    st.markdown(f"""
+                    <div class="game-card">
+                        <div class="game-card-header">
+                            <span style="color:#ffcc00; font-size:12px;">{html.escape(str(card['Faction']))}</span>
+                            <span class="game-card-type">{html.escape(str(card['Card_Type']))}</span>
+                        </div>
+                        <div class="game-card-title">{html.escape(str(card['Name']))}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if card['Image_Data']:
+                        st.image(card['Image_Data'], use_container_width=True)
+                        
+                    st.markdown(f"""
+                    <div class="stats-grid">
+                        <div class="stat-item"><span class="stat-letter">С</span>{int(card['Strength'])}</div>
+                        <div class="stat-item"><span class="stat-letter">Л</span>{int(card['Agility'])}</div>
+                        <div class="stat-item"><span class="stat-letter">М</span>{int(card['Mastery'])}</div>
+                        <div class="stat-item"><span class="stat-letter">С</span>{int(card['Wit'])}</div>
+                    </div>
+                    <div class="alignment-badge {align_class}">{html.escape(align_str)}</div>
+                    """, unsafe_allow_html=True)
+
+                    if card['Description']:
+                        st.caption(card['Description'])
+                    st.write("---")
+        else:
+            st.info("В базе пока нет карточек. Добавьте первую карточку через панель выше!")
+
+    # --- ВКЛАДКА СТАТИСТИКИ И БАЛАНСА КАРТОЧЕК ---
+    with tab_card_stats:
+        if df_cards.empty:
+            st.info("Добавьте карточки, чтобы увидеть статистику и баланс.")
+        else:
+            st.subheader("Баланс классов и статистика колоды")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("🃏 Всего карточек", len(df_cards))
+            k2.metric("👤 Персонажей", len(df_cards[df_cards['Card_Type'] == 'Персонаж']))
+            k3.metric("🎁 Карточек бонусов", len(df_cards[df_cards['Card_Type'] == 'Бонус']))
+            char_only = df_cards[df_cards['Card_Type'] == 'Персонаж']
+            avg_power = int(char_only['Total_Power'].mean()) if not char_only.empty else 0
+            k4.metric("⚡ Средняя сумма статов", avg_power)
+
+            st.write("---")
+            ch1, ch2 = st.columns(2)
+            with ch1:
+                st.markdown("**Соотношение классов (Герой / Злодей / Нейтралитет)**")
+                al_counts = df_cards['Alignment'].value_counts().reset_index()
+                al_counts.columns = ['Класс', 'Количество']
+                color_map_align = {"Герой": "#4da6ff", "Злодей": "#ff4d4d", "Нейтралитет": "#ffcc00"}
+                fig_al = px.pie(al_counts, values='Количество', names='Класс', hole=0.45, color='Класс', color_discrete_map=color_map_align)
+                fig_al.update_traces(textposition='inside', textinfo='percent+label')
+                fig_al.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor='rgba(0,0,0,0)', font_color='white')
+                st.plotly_chart(fig_al, use_container_width=True)
+
+            with ch2:
+                st.markdown("**Баланс средних показателей по классам (Персонажи)**")
+                if not char_only.empty:
+                    avg_stats = char_only.groupby('Alignment')[['Strength', 'Agility', 'Mastery', 'Wit']].mean().reset_index()
+                    avg_melted = avg_stats.melt(id_vars='Alignment', var_name='Показатель', value_name='Среднее значение')
+                    stat_ru = {'Strength': 'Сила (С)', 'Agility': 'Ловкость (Л)', 'Mastery': 'Мастерство (М)', 'Wit': 'Смекалка (С)'}
+                    avg_melted['Показатель'] = avg_melted['Показатель'].map(stat_ru)
+                    fig_avg = px.bar(avg_melted, x='Показатель', y='Среднее значение', color='Alignment', barmode='group', color_discrete_map=color_map_align)
+                    fig_avg.update_layout(margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
+                    st.plotly_chart(fig_avg, use_container_width=True)
+                else:
+                    st.info("Нет карточек категории «Персонаж» для расчета средних характеристик.")
+
+            st.write("---")
+            st.markdown("**🏆 Топ-10 карточек по характеристикам**")
+            rank_metric = st.selectbox("Выберите показатель для рейтинга:", [
+                "Суммарная мощь (С+Л+М+С)", "Сила (С)", "Ловкость (Л)", "Мастерство (М)", "Смекалка (С)"
+            ])
+            metric_col_map = {
+                "Суммарная мощь (С+Л+М+С)": "Total_Power",
+                "Сила (С)": "Strength",
+                "Ловкость (Л)": "Agility",
+                "Мастерство (М)": "Mastery",
+                "Смекалка (С)": "Wit"
+            }
+            target_m = metric_col_map[rank_metric]
+            top_c = df_cards.sort_values(by=target_m, ascending=False).head(10)
+            fig_top = px.bar(top_c, x=target_m, y='Name', color='Alignment', orientation='h', color_discrete_map=color_map_align, text=target_m)
+            fig_top.update_layout(yaxis={'categoryorder':'total ascending'}, margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
+            st.plotly_chart(fig_top, use_container_width=True)
+
+
+# ==============================================================================
+# МОДУЛЬ 3: АРХИВЫ И ЛОР (С ЗАГРУЗКОЙ ФАЙЛОВ С ПК)
 # ==============================================================================
 elif app_mode == "📚 Архивы и Лор":
     st.title("📚 Архивы БИГ СИТИ")
@@ -427,7 +703,7 @@ elif app_mode == "📚 Архивы и Лор":
 
     with col_left:
         st.subheader("🗂 Оглавление")
-        if st.button("➕ Создать новый документ", use_container_width=True, type="primary"):
+        if st.button("➕ Создать / Загрузить документ", use_container_width=True, type="primary"):
             st.session_state['selected_doc'] = "__NEW__"
 
         categories = ["Все"] + sorted([c for c in df_arch['Category'].unique().tolist() if c])
@@ -446,9 +722,16 @@ elif app_mode == "📚 Архивы и Лор":
     with col_right:
         if st.session_state.get('selected_doc') == "__NEW__" or df_arch.empty:
             st.subheader("✍️ Новый архивный документ")
-            new_title = st.text_input("Название документа (например: История Синдиката):")
+            
+            uploaded_doc = st.file_uploader("📂 Загрузить готовый файл с компьютера (.docx, .txt, .md):", type=["docx", "txt", "md"], key="arch_upload")
+            init_title, init_content = "", ""
+            if uploaded_doc is not None:
+                init_title, init_content = read_uploaded_document(uploaded_doc)
+                st.success(f"Файл «{uploaded_doc.name}» успешно прочитан! Проверьте текст ниже и нажмите «Сохранить в Архив».")
+
+            new_title = st.text_input("Название документа:", value=init_title)
             new_cat = st.text_input("Раздел / Том (например: Лор, Правила, Локации):", value="Общий Лор")
-            new_content = st.text_area("Текст документа (поддерживается Markdown):", height=400)
+            new_content = st.text_area("Текст документа:", value=init_content, height=400)
             
             c1, c2 = st.columns(2)
             with c1:
@@ -471,7 +754,7 @@ elif app_mode == "📚 Архивы и Лор":
             curr_title = st.session_state['selected_doc']
             doc_row = df_arch[df_arch['Title'] == curr_title].iloc[0]
 
-            mode_read, mode_edit = st.tabs(["📖 Чтение", "✏️ Редактировать"])
+            mode_read, mode_edit = st.tabs(["📖 Чтение", "✏️ Редактировать / Заменить файлом"])
             with mode_read:
                 st.caption(f"Раздел: **{doc_row['Category']}**")
                 st.markdown(f"## {doc_row['Title']}")
@@ -479,9 +762,15 @@ elif app_mode == "📚 Архивы и Лор":
                 st.markdown(doc_row['Content'])
 
             with mode_edit:
+                replace_doc = st.file_uploader("📂 Заменить текст из файла (.docx, .txt, .md):", type=["docx", "txt", "md"], key="arch_replace")
+                curr_content_val = doc_row['Content']
+                if replace_doc is not None:
+                    _, curr_content_val = read_uploaded_document(replace_doc)
+                    st.info("Текст из файла подгружен в поле ниже. Нажмите «Обновить документ», чтобы сохранить.")
+
                 ed_title = st.text_input("Название:", value=doc_row['Title'])
                 ed_cat = st.text_input("Раздел:", value=doc_row['Category'])
-                ed_content = st.text_area("Содержание:", value=doc_row['Content'], height=420)
+                ed_content = st.text_area("Содержание:", value=curr_content_val, height=420)
                 
                 b1, b2 = st.columns([3, 1])
                 with b1:
@@ -503,112 +792,7 @@ elif app_mode == "📚 Архивы и Лор":
 
 
 # ==============================================================================
-# МОДУЛЬ 3: ГАЛЕРЕЯ КАРТОЧЕК (ЗАГРУЗКА ФОТО И СЕТКА)
-# ==============================================================================
-elif app_mode == "🃏 Галерея Карточек":
-    st.title("🃏 Галерея Игровых Карточек")
-    df_cards = st.session_state['cards']
-
-    with st.expander("➕ Добавить или отредактировать карточку", expanded=df_cards.empty):
-        edit_mode = st.selectbox("Режим:", ["Создать новую карточку"] + df_cards['Name'].tolist())
-        
-        if edit_mode == "Создать новую карточку":
-            c_name_val, c_fac_val, c_stat_val, c_desc_val, c_img_val = "", "", "", "", ""
-        else:
-            row_c = df_cards[df_cards['Name'] == edit_mode].iloc[0]
-            c_name_val = row_c['Name']
-            c_fac_val = row_c['Faction']
-            c_stat_val = row_c['Stats']
-            c_desc_val = row_c['Description']
-            c_img_val = row_c['Image_Data']
-
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            c_name = st.text_input("Название карточки / Персонаж:", value=c_name_val)
-            c_fac = st.text_input("Фракция / Колода (напр. Синдикат, Атака, Уловка):", value=c_fac_val)
-            c_stat = st.text_input("Характеристики (напр. Урон: 4 | Защита: 2):", value=c_stat_val)
-        with col_f2:
-            uploaded_img = st.file_uploader("📸 Загрузить фото карточки (с телефона или ПК):", type=["png", "jpg", "jpeg", "webp"])
-            c_url = st.text_input("ИЛИ вставить прямую ссылку на картинку:", value="" if c_img_val.startswith("data:image") else c_img_val)
-
-        c_desc = st.text_area("Описание эффекта / Лор карточки:", value=c_desc_val, height=100)
-
-        btn_c1, btn_c2 = st.columns([3, 1])
-        with btn_c1:
-            if st.button("💾 Сохранить карточку в облако", type="primary", use_container_width=True):
-                if c_name.strip():
-                    final_img = c_img_val
-                    if uploaded_img is not None:
-                        final_img = compress_uploaded_image(uploaded_img)
-                    elif c_url.strip():
-                        final_img = c_url.strip()
-
-                    new_card_data = {
-                        "Name": c_name.strip(),
-                        "Faction": c_fac.strip() or "Общие",
-                        "Stats": c_stat.strip(),
-                        "Description": c_desc.strip(),
-                        "Image_Data": final_img
-                    }
-
-                    if edit_mode == "Создать новую карточку":
-                        st.session_state['cards'] = pd.concat([df_cards, pd.DataFrame([new_card_data])], ignore_index=True)
-                    else:
-                        idx = df_cards[df_cards['Name'] == edit_mode].index[0]
-                        for k, v in new_card_data.items():
-                            st.session_state['cards'].at[idx, k] = v
-
-                    save_sheet("Cards", st.session_state['cards'])
-                    st.success("Карточка успешно сохранена!")
-                    st.rerun()
-                else:
-                    st.warning("Укажите название карточки!")
-        with btn_c2:
-            if edit_mode != "Создать новую карточку":
-                if st.button("🗑 Удалить карточку", use_container_width=True):
-                    st.session_state['cards'] = df_cards[df_cards['Name'] != edit_mode].reset_index(drop=True)
-                    save_sheet("Cards", st.session_state['cards'])
-                    st.rerun()
-
-    st.write("---")
-
-    if not df_cards.empty:
-        f_col1, f_col2 = st.columns([1, 2])
-        with f_col1:
-            factions = ["Все"] + sorted([f for f in df_cards['Faction'].unique().tolist() if f])
-            sel_fac = st.selectbox("Фильтр по фракции/колоде:", factions)
-        with f_col2:
-            search_q = st.text_input("🔍 Поиск карточки по названию или эффекту:")
-
-        view_cards = df_cards.copy()
-        if sel_fac != "Все":
-            view_cards = view_cards[view_cards['Faction'] == sel_fac]
-        if search_q.strip():
-            q = search_q.strip().lower()
-            view_cards = view_cards[view_cards['Name'].str.lower().str.contains(q) | view_cards['Description'].str.lower().str.contains(q)]
-
-        cols = st.columns(3)
-        for i, (_, card) in enumerate(view_cards.iterrows()):
-            with cols[i % 3]:
-                st.markdown(f"""
-                <div class="game-card">
-                    <div class="game-card-faction">{html.escape(str(card['Faction']))}</div>
-                    <div class="game-card-title">{html.escape(str(card['Name']))}</div>
-                </div>
-                """, unsafe_allow_html=True)
-                if card['Image_Data']:
-                    st.image(card['Image_Data'], use_container_width=True)
-                if card['Stats']:
-                    st.markdown(f"<div class='game-card-stats'>⚡ {html.escape(str(card['Stats']))}</div>", unsafe_allow_html=True)
-                if card['Description']:
-                    st.write(card['Description'])
-                st.write("---")
-    else:
-        st.info("Галерея пока пуста. Откройте вкладку выше и загрузите свою первую карточку!")
-
-
-# ==============================================================================
-# МОДУЛЬ 4: СЦЕНАРИИ И СЮЖЕТ (СКРЫТЫЕ ЗАГОЛОВКИ И ПОДЗАГОЛОВКИ)
+# МОДУЛЬ 4: СЦЕНАРИИ И СЮЖЕТ (С ЗАГРУЗКОЙ ФАЙЛОВ И СКРЫТЫМИ ЗАГОЛОВКАМИ)
 # ==============================================================================
 elif app_mode == "🎬 Сценарии и Сюжет":
     st.title("🎬 Сценарии и Сюжетные Линии")
@@ -618,7 +802,7 @@ elif app_mode == "🎬 Сценарии и Сюжет":
 
     with col_s_left:
         st.subheader("📑 Сюжетные ветки")
-        if st.button("➕ Новый сценарий / Акт", use_container_width=True, type="primary"):
+        if st.button("➕ Новый / Загрузить сценарий", use_container_width=True, type="primary"):
             st.session_state['selected_script'] = "__NEW_SCRIPT__"
 
         scr_titles = df_scr['Title'].tolist()
@@ -629,12 +813,12 @@ elif app_mode == "🎬 Сценарии и Сюжет":
         else:
             st.info("Сценариев пока нет.")
 
-        with st.expander("💡 Как делать скрытые заголовки?"):
+        with st.expander("💡 Как работают скрытые заголовки?"):
             st.markdown("""
-            В тексте сценария используйте решетки в начале строки:
-            * `# Заголовок` — создаст **главный скрытый блок** (1 уровень).
-            * `## Подзаголовок` — создаст **вложенный скрытый подзаголовок** (2 уровень) внутри первого.
-            * `### Деталь` — создаст **глубокий спойлер** (3 уровень).
+            * `# Заголовок` — **главный скрытый блок** (1 уровень).
+            * `## Подзаголовок` — **вложенный подзаголовок** (2 уровень).
+            * `### Деталь` — **глубокий спойлер** (3 уровень).
+            * При загрузке файла `.docx` стандартные стили Word (*Заголовок 1, 2, 3*) превращаются в `#`, `##`, `###` автоматически!
             """)
 
     with col_s_right:
@@ -645,23 +829,26 @@ elif app_mode == "🎬 Сценарии и Сюжет":
             "## Сцена 1. Встреча в порту\n"
             "Диалог героев у старого склада.\n\n"
             "### Секретная улика (Спойлер)\n"
-            "Если игроки обыщут ящик, они найдут медальон.\n\n"
-            "## Сцена 2. Погоня\n"
-            "Динамическая сцена на крышах.\n\n"
-            "# Акт 2. Финальная битва\n"
-            "Описание развязки."
+            "Если игроки обыщут ящик, они найдут медальон."
         )
 
         if st.session_state.get('selected_script') == "__NEW_SCRIPT__" or df_scr.empty:
-            st.subheader("✍️ Создание нового сценария")
-            s_title = st.text_input("Название сценария / Главы:")
+            st.subheader("✍️ Создание или загрузка сценария")
+            
+            up_scr = st.file_uploader("📂 Загрузить готовый сценарий с компьютера (.docx, .txt, .md):", type=["docx", "txt", "md"], key="scr_upload")
+            s_init_title, s_init_content = "", default_template
+            if up_scr is not None:
+                s_init_title, s_init_content = read_uploaded_document(up_scr)
+                st.success(f"Сценарий «{up_scr.name}» загружен! Проверьте разметку и нажмите «Сохранить сценарий».")
+
+            s_title = st.text_input("Название сценария / Главы:", value=s_init_title)
             c_a1, c_a2 = st.columns(2)
             with c_a1:
                 s_act = st.text_input("Акт / Сюжетная арка:", value="Основной сюжет")
             with c_a2:
                 s_status = st.selectbox("Статус готовности:", ["💡 Идея", "✍️ В работе", "✅ Готово"])
             
-            s_content = st.text_area("Текст сценария (используйте #, ##, ### для скрытых блоков):", value=default_template, height=400)
+            s_content = st.text_area("Текст сценария (используйте #, ##, ### для скрытых блоков):", value=s_init_content, height=400)
 
             if st.button("💾 Сохранить сценарий", type="primary", use_container_width=True):
                 if s_title.strip():
@@ -678,16 +865,22 @@ elif app_mode == "🎬 Сценарии и Сюжет":
             curr_s_title = st.session_state['selected_script']
             s_row = df_scr[df_scr['Title'] == curr_s_title].iloc[0]
 
-            tab_s_read, tab_s_edit = st.tabs(["🎭 Интерактивное чтение (Со спойлерами)", "✏️ Редактировать сценарий"])
+            tab_s_read, tab_s_edit = st.tabs(["🎭 Интерактивное чтение (Со спойлерами)", "✏️ Редактировать / Загрузить из файла"])
 
             with tab_s_read:
                 st.caption(f"Арка: **{s_row['Act']}** | Статус: **{s_row['Status']}**")
                 st.markdown(f"## {s_row['Title']}")
-                st.caption("👆 Нажимайте на цветные блоки ниже, чтобы раскрывать заголовки и вложенные подзаголовки:")
+                st.caption("👆 Нажимайте на цветные плашки ниже, чтобы раскрывать акты, сцены и секреты:")
                 rendered_html = render_script_with_spoilers(str(s_row['Content']))
                 st.markdown(rendered_html, unsafe_allow_html=True)
 
             with tab_s_edit:
+                rep_scr = st.file_uploader("📂 Обновить текст сценария из файла (.docx, .txt, .md):", type=["docx", "txt", "md"], key="scr_replace")
+                s_curr_text = s_row['Content']
+                if rep_scr is not None:
+                    _, s_curr_text = read_uploaded_document(rep_scr)
+                    st.info("Текст из файла подгружен. Нажмите «Сохранить изменения» внизу.")
+
                 ed_s_title = st.text_input("Название:", value=s_row['Title'])
                 ec1, ec2 = st.columns(2)
                 with ec1:
@@ -697,7 +890,7 @@ elif app_mode == "🎬 Сценарии и Сюжет":
                     curr_st_idx = statuses.index(s_row['Status']) if s_row['Status'] in statuses else 0
                     ed_s_status = st.selectbox("Статус:", statuses, index=curr_st_idx)
 
-                ed_s_content = st.text_area("Текст сценария (# - Заголовок, ## - Подзаголовок, ### - Секрет):", value=s_row['Content'], height=420)
+                ed_s_content = st.text_area("Текст сценария (# - Заголовок, ## - Подзаголовок, ### - Секрет):", value=s_curr_text, height=420)
 
                 sb1, sb2 = st.columns([3, 1])
                 with sb1:
