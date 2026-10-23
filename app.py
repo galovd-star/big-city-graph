@@ -318,7 +318,8 @@ def resolve_linked_character(card_row, valid_chars_list):
         return explicit_link
     card_name = str(card_row.get('Name', '')).strip()
     for ch in valid_chars_list:
-        if ch.strip().lower() == card_name.lower():
+        # Исправленная строка: принудительно делаем ch строкой перед .strip()
+        if str(ch).strip().lower() == card_name.lower():
             return ch
     return None
 
@@ -1482,8 +1483,7 @@ elif app_mode == "🃏 Галерея Карточек":
         df_cards[s_col] = pd.to_numeric(df_cards[s_col], errors='coerce').fillna(0).astype(int)
     df_cards['Total_Power'] = df_cards['Strength'] + df_cards['Agility'] + df_cards['Mastery'] + df_cards['Wit']
 
-    valid_graph_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().unique().tolist()
-
+    valid_graph_chars = st.session_state['nodes']['Имя / Название персонажа'].dropna().astype(str).unique().tolist()
     tab_gallery, tab_number_lines, tab_card_stats = st.tabs([
         "🃏 Коллекция и Конструктор",
         "📏 Прямая Показателей (Все статы)",
