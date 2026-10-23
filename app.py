@@ -210,6 +210,15 @@ FAC_COLS = [
     'Influence', 'Color', 'Description', 'Logo_Data', 'Allies', 'Enemies'
 ]
 
+NUMERIC_COLS = {'Strength', 'Agility', 'Mastery', 'Wit', 'Order_Index', 'X', 'Y', 'Influence', 'Weight'}
+
+def clean_text_cell(val):
+    if pd.isna(val):
+        return ""
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val))
+    return str(val)
+
 def safe_read_sheet(worksheet_name, default_cols):
     try:
         df = conn.read(spreadsheet=SHEET_URL, worksheet=worksheet_name)
@@ -239,7 +248,13 @@ def safe_read_sheet(worksheet_name, default_cols):
                     df[col] = ""
                 else:
                     df[col] = "Не указано"
-        return df.fillna("")
+        
+        df = df.fillna("")
+        # Принудительно переводим все текстовые столбцы (включая имена с цифрами) в строки
+        for col in df.columns:
+            if col not in NUMERIC_COLS:
+                df[col] = df[col].map(clean_text_cell)
+        return df
     except Exception as e:
         st.error(f"⚠️ Ошибка загрузки листа '{worksheet_name}'. База защищена от стирания. Текст ошибки: {e}")
         st.stop()
@@ -1810,12 +1825,16 @@ elif app_mode == "🃏 Галерея Карточек":
                     if linked_hero:
                         rels = get_character_relations(linked_hero, st.session_state['edges'])
                         with st.expander(f"🔗 Связи на графе: {linked_hero} ({len(rels)})"):
-                            hero_info = st.session_state['nodes'][st.session_state['nodes']['Имя / Название персонажа'] == linked_hero].iloc[0]
-                            meta_parts = [f"**{c}**: {hero_info[c]}" for c in st.session_state['nodes'].columns if c not in ['Имя / Название персонажа', 'Заметки'] and str(hero_info[c]) != 'Не указано']
-                            if meta_parts:
-                                st.markdown(" • ".join(meta_parts))
-                            if str(hero_info.get('Заметки', '')).strip() not in ['', 'Не указано']:
-                                st.caption(f"📝 {hero_info['Заметки']}")
+                            hero_matches = st.session_state['nodes'][
+                                st.session_state['nodes']['Имя / Название персонажа'].astype(str).str.strip() == str(linked_hero).strip()
+                            ]
+                            if not hero_matches.empty:
+                                hero_info = hero_matches.iloc[0]
+                                meta_parts = [f"**{c}**: {hero_info[c]}" for c in st.session_state['nodes'].columns if c not in ['Имя / Название персонажа', 'Заметки'] and str(hero_info[c]) != 'Не указано']
+                                if meta_parts:
+                                    st.markdown(" • ".join(meta_parts))
+                                if str(hero_info.get('Заметки', '')).strip() not in ['', 'Не указано']:
+                                    st.caption(f"📝 {hero_info['Заметки']}")
 
                             if rels:
                                 for r in rels:
