@@ -240,10 +240,11 @@ def safe_read_sheet(worksheet_name, default_cols):
                 else:
                     df[col] = "Не указано"
         return df.fillna("")
-    except Exception:
-        return pd.DataFrame(columns=default_cols)
+    except Exception as e:
+        st.error(f"⚠️ Ошибка загрузки листа '{worksheet_name}'. База защищена от стирания. Текст ошибки: {e}")
+        st.stop()
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=3600)
 def load_all_data():
     nodes = safe_read_sheet("Nodes", ['Имя / Название персонажа', 'Категория плана', 'Пол', 'Группировка', 'Заметки']).replace("", "Не указано")
     edges = safe_read_sheet("Edges", ['Source', 'Target', 'Weight', 'Type'])
@@ -268,7 +269,7 @@ def load_all_data():
     
     return nodes, edges, archives, cards, scripts, locations, timeline, factions
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=3600)
 def load_config():
     try:
         cfg = conn.read(spreadsheet=SHEET_URL, worksheet="Config")
@@ -423,6 +424,8 @@ def build_character_matchers(char_names):
         clean = str(name).strip()
         if not clean or clean == "Не указано":
             continue
+        if clean.isdigit():
+            continue
         alias_to_canon[clean] = clean
         m = re.match(r'^(.+?)\s*\((.+?)\)$', clean)
         if m:
@@ -550,7 +553,7 @@ def highlight_characters_in_escaped_line(escaped_line, matchers, popup_span_map,
             replacements.append((surface, canon_name))
             if canon_name not in found_chars_list:
                 found_chars_list.append(canon_name)
-            return f"\x00CH{idx}\x00"
+            return f"__BIGCITY_CHAR_{idx}__"
         return _repl
 
     work_line = escaped_line
@@ -566,7 +569,7 @@ def highlight_characters_in_escaped_line(escaped_line, matchers, popup_span_map,
             f'<span class="char-inline-popup">{popup_inner}</span>'
             f'</span>'
         )
-        work_line = work_line.replace(f"\x00CH{idx}\x00", badge_html)
+        work_line = work_line.replace(f"__BIGCITY_CHAR_{idx}__", badge_html)
 
     return work_line
 
